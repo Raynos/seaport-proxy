@@ -1,0 +1,45 @@
+{
+  "name": "seaport-proxy",
+  "version": "0.0.1",
+  "description": "Seaport in the browser!",
+  "keywords": [],
+  "author": "Raynos <raynos2@gmail.com>",
+  "repository": "git://github.com/Raynos/seaport-proxy.git",
+  "main": "index",
+  "homepage": "https://github.com/Raynos/seaport-proxy",
+  "contributors": [
+    {
+      "name": "Jake Verbaten"
+    }
+  ],
+  "bugs": {
+    "url": "https://github.com/Raynos/seaport-proxy/issues",
+    "email": "raynos2@gmail.com"
+  },
+  "browserify": "browser.js",
+  "dependencies": {
+    "ap": "~0.1.0",
+    "shoe": "0.0.3",
+    "request": "~2.9.203",
+    "xtend": "~1.0.3",
+    "upnode": "~0.4.1",
+    "pause-stream": "0.0.3",
+    "node-uuid": "~1.3.3",
+    "mdm": "git://github.com/Raynos/mux-demux#patch-1"
+  },
+  "devDependencies": {
+    "testling": "git://github.com/Raynos/testling#master",
+    "testem": "git://github.com/Raynos/testem#master",
+    "sinon": "git://github.com/Raynos/Sinon.JS.git",
+    "tap": "0.2.5"
+  },
+  "licenses": [
+    {
+      "type": "MIT",
+      "url": "http://github.com/Raynos/seaport-proxy/raw/master/LICENSE"
+    }
+  ],
+  "scripts": {
+    "test": "make node-test"
+  }
+}
