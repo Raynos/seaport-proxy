@@ -3,7 +3,7 @@ var seaport = require("seaport")
     , path = require("path")
     , ecstatic = require("ecstatic")(path.join(__dirname, "static"))
     , server = http.createServer(ecstatic)
-    , ports = seaport.connect(9090, { secret: 'beep boop' })
+    , ports = seaport.connect(9092, { secret: 'beep boop' })
     , seaportProxy = require("../..")
 
 server.listen(8080)

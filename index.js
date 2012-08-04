@@ -1,66 +1,62 @@
 var partial = require("ap").partial
-    , shoe = require("shoe")
+    , boot = require("boot")
     , net = require("net")
     , request = require("request")
-    , upnode = require("upnode")
+    , PauseStream = require("pause-stream")
+    , dnode = require("dnode")
     , extend = require("xtend")
-    , MuxDemux = require("mux-demux")
+    , getRegExp = /(seaport-proxy-get-)([\w\W]*)/
 
 module.exports = seaportProxy
 
-function seaportProxy(ports, httpServer, uri) {
-    var sock = shoe(handleStream)
+function seaportProxy(ports, httpServer, uri, callback) {
+    var sock = boot(handleStream)
 
     sock.install(httpServer, uri)
 
     function handleStream(stream) {
-        var up = upnode(attachProxy)
-            , mdm = MuxDemux()
-            , streams = {}
+        var meta = stream.meta
 
-        mdm.on("connection", handleIncomingStreams)
-            
-        stream.pipe(mdm).pipe(stream)
+        stream.on("data", function (data) {
+            console.log("incoming data", data)
+        })
 
-        function handleIncomingStreams(stream) {
-            if (stream.meta === "upnode") {
-                console.log("got upnode stream")
-                up.pipe(stream).pipe(up)
-            } else {
-                console.log("got a keyed stream", stream.meta)
-                streams[stream.meta] = stream
-            }
+        if (typeof meta !== "string") {
+            return callback && callback(stream)
         }
-
-        function attachProxy(ports) {
-            this.get = get
-            this.query = query
+        var match = meta.match(getRegExp)
+        if (match === null) {
+            return callback && callback(stream)
         }
+        var role = match[2]
 
-        function get(role, token) {
-            console.log("got get request", role, token)
-            ports.get(role, partial(connectToPort, token))
-        }
+        var bufferWriteStream = PauseStream()
 
-        function query(role, token) {
-            ports.query(role, partial(connectToPort, token))
-        }
+        bufferWriteStream.pause()
+        console.log("buffer the write stream")
+        stream.pipe(bufferWriteStream)
 
-        function connectToPort(token, ports) {
-            console.log("got the ports to magic server", ports)
-            var stream
-
-            ports.protocol = ports.protocol || "net"
-            if (ports.protocol === "net") {
-                stream = net.connect(ports.port, ports.host)
-            } else if (ports.protocol === "http") {
-                var uri = "http://" + ports.host + ":" + ports.port
-                stream = request(uri)
-            }
-
-            var tokenStream = streams[token]
-            console.log("got the token stream!", token)
-            stream.pipe(tokenStream).pipe(stream)
-        }
+        get(role, ports, bufferWriteStream, stream)
     }
+}
+
+function get(role, ports, write, read) {
+    console.log("got ", role)
+    ports.get(role, function (ports) {
+        console.log("got ports", ports)
+        var stream
+        ports[0].protocol = ports[0].protocol || "net"
+        if (ports[0].protocol === "net") {
+            console.log("connecting", ports[0].port, ports[0].host)
+            stream = net.connect(ports[0].port, ports[0].host)
+        } else if (ports[0].protocol === "http") {
+            console.log("http!")
+            var uri = "http://" + ports[0].host + ":" + ports[0].port
+            stream = request(uri)
+        }
+
+        write.pipe(stream).pipe(read)
+
+        write.resume()
+    })
 }

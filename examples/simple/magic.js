@@ -1,20 +1,16 @@
 var seaport = require("seaport")
-    , ports = seaport.connect(9090, { secret: 'beep boop' })
+    , ports = seaport.connect(9092, { secret: 'beep boop' })
     , net = require("net")
-    , dnode = require("dnode")
 
 var server = net.createServer(function (stream) {
-    console.log("got incoming request!")
-    var d = dnode({
-        magic: function (cb) {
-            console.log("someone called magic!")
-            cb(null, "magic!")
-        }
-    })
-    d.pipe(stream).pipe(d)
+    console.log("got request!")
+
+    stream.write("magic from seaport")
 })
 
+console.log("calling service on seaport")
+
 ports.service('magic@1.2.3', function (port, ready) {
-    console.log("registered magic service")
+    console.log("registered magic service", port)
     server.listen(port, ready)
 })

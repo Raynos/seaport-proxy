@@ -366,52 +366,138 @@ process.binding = function (name) {
 
 require.define("/package.json",function(require,module,exports,__dirname,__filename,process){module.exports = {"main":"index","browserify":"browser.js"}});
 
-require.define("/browser.js",function(require,module,exports,__dirname,__filename,process){var shoe = require("shoe")
-    , MuxDemux = require("mux-demux")
-    , upnode = require("upnode")
-    , uuid = require("node-uuid")
-    , mdm = MuxDemux()
+require.define("/browser.js",function(require,module,exports,__dirname,__filename,process){var boot = require("boot")
 
 module.exports = {
     connect: connect
 }
 
 function connect(uri) {
-    var stream = shoe(uri)
-    mdm.pipe(stream).pipe(mdm)
-    var upnodeStream = mdm.createStream("upnode")
-    var up = upnode.connect({
-        createStream: function () {
-            return upnodeStream
-        }
-    })
+    var mdm = boot(uri)
 
     return {
         get: get
-        , query: query
     }
 
     function get(role, callback) {
-        var key = uuid()
-            , stream = mdm.createStream(key)
+        var stream = mdm.createStream("seaport-proxy-get-" + role)
 
         callback(stream)
+    }
+}});
 
-        up(function (remote) {
-            console.log("remote", remote, remote.get, key)
-            remote.get(role, key)
+require.define("/node_modules/boot/package.json",function(require,module,exports,__dirname,__filename,process){module.exports = {"main":"index","browserify":"browser.js"}});
+
+require.define("/node_modules/boot/browser.js",function(require,module,exports,__dirname,__filename,process){var shoe = require("mux-demux-shoe")
+    , through = require("through")
+    , PauseStream = require("pause-stream")
+    , es = require("event-stream")
+
+module.exports = shoeProxy
+
+function shoeProxy(uri) {
+    var proxyWrite = PauseStream()
+        , proxyRead = through()
+        , proxy = es.duplex(proxyWrite, proxyRead)
+        , metaStreams = []
+        , stream
+
+    proxy.createStream = createStream
+    proxy.createWriteStream = createWriteStream
+    proxy.createReadStream = createReadStream
+
+    createShoeStream()
+
+    return proxy
+
+    function createShoeStream() {
+        stream = shoe(uri)
+
+        metaStreams.forEach(function (details) {
+            var proxyWrite = details.proxyWrite
+                , proxyRead = details.proxyRead
+
+            var mdm = stream.createStream(details.meta, details.opts)
+
+            proxyWrite.pipe(mdm).pipe(proxyRead)
+        })
+
+        stream.on("connect", function () {
+            proxyWrite.resume()
+            proxy.emit("connect")
+        })
+
+        proxyWrite.pipe(stream).pipe(proxyRead)
+
+        stream.on("end", function () {
+            proxyWrite.pause()
+            proxy.emit("disconnect")
+            createShoeStream()
         })
     }
 
-    function query(role, callback) {
-        var key = uuid()
-            , stream = mdm.createStream(key)
+    function createStream(meta, opts) {
+        var proxyWrite = PauseStream()
+            , proxyRead = through()
+            , proxy = es.duplex(proxyWrite, proxyRead)
 
-        callback(stream)
+        var mdm = stream.createStream(meta, opts)
 
-        up(function (remote) {
-            remote.query(role, key)
+        proxyWrite.pipe(mdm).pipe(proxyRead)
+
+        metaStreams.push({
+            proxy: proxy
+            , proxyRead: proxyRead
+            , proxyWrite: proxyWrite
+            , meta: meta
+            , opts: opts
         })
+
+        return proxy
+    }
+
+    function createWriteStream(meta) {
+        createStream(meta, {
+            writable: true
+            , readable: false
+        })
+    }
+
+    function createReadStream(meta) {
+        createStream(meta, {
+            writable: false
+            , readable: true
+        })
+    }
+}});
+
+require.define("/node_modules/boot/node_modules/mux-demux-shoe/package.json",function(require,module,exports,__dirname,__filename,process){module.exports = {"main":"index","browserify":"browser.js"}});
+
+require.define("/node_modules/boot/node_modules/mux-demux-shoe/browser.js",function(require,module,exports,__dirname,__filename,process){var shoe = require("shoe")
+    , MuxDemux = require("mux-demux")
+
+module.exports = createMdmStream
+
+function createMdmStream(uri) {
+    var mdm = MuxDemux({
+            error: false
+        })
+        , stream = shoe(uri)
+
+    stream.on("connect", onconnect)
+
+    stream.on("end", onend)
+
+    mdm.pipe(stream).pipe(mdm)
+
+    return mdm
+
+    function onconnect() {
+        mdm.emit("connect")
+    }
+
+    function onend() {
+        mdm.emit("end")
     }
 }});
 
@@ -3420,11 +3506,11 @@ if (typeof module === 'object' && module && module.exports) {
 
 });
 
-require.define("/node_modules/mux-demux/package.json",function(require,module,exports,__dirname,__filename,process){module.exports = {}});
+require.define("/node_modules/boot/node_modules/mux-demux-shoe/node_modules/mux-demux/package.json",function(require,module,exports,__dirname,__filename,process){module.exports = {}});
 
-require.define("/node_modules/mux-demux/index.js",function(require,module,exports,__dirname,__filename,process){var es = require('event-stream')
+require.define("/node_modules/boot/node_modules/mux-demux-shoe/node_modules/mux-demux/index.js",function(require,module,exports,__dirname,__filename,process){var es = require('event-stream')
 
-function MuxDemux (name) {
+function MuxDemux (opts) {
 
   function createID() {
     return (
@@ -3456,14 +3542,18 @@ function MuxDemux (name) {
   })
 
   function destroyAll (_err) {
-    md.removeListener('end', destroyAll) 
-    md.removeListener('error', destroyAll) 
-    md.removeListener('close', destroyAll) 
+    md.removeListener('end', destroyAll)
+    md.removeListener('error', destroyAll)
+    md.removeListener('close', destroyAll)
     var err = _err || new Error ('unexpected disconnection')
     for (var i in streams) {
       var s = streams[i]
-      s.emit('error', err)
-      s.destroy()
+      if (opts && opts.error === false) {
+        s.end()
+      } else {
+        s.emit('error', err)
+        s.destroy()
+      }
     }
   }
 
@@ -3481,14 +3571,14 @@ function MuxDemux (name) {
         throw new Error('stream is not writable')
       md.emit('data', [s.id, 'data', data])
     }, function () {
-      md.emit('data', [s.id, 'end']) 
+      md.emit('data', [s.id, 'end'])
     })
     s.pause = function () {
       md.emit('data', [s.id, 'pause'])
     }
     s.resume = function () {
       md.emit('data', [s.id, 'resume'])
-    } 
+    }
     s.once('close', function () {
       md.emit('data', [s.id, 'close'])
       delete streams[id]
@@ -3497,7 +3587,7 @@ function MuxDemux (name) {
     s.readable = opts.readable
     streams[s.id = id] = s
     s.meta = meta
-    return s 
+    return s
   }
 
   var outer = es.connect(es.split(), es.parse(), md, es.stringify())
@@ -3512,7 +3602,7 @@ function MuxDemux (name) {
     pipe.call(outer, dest, opts)
     md.on('end', destroyAll)
     md.on('close', destroyAll)
-    md.on('error', destroyAll) 
+    md.on('error', destroyAll)
     return dest
   }
 
@@ -3520,7 +3610,7 @@ function MuxDemux (name) {
     opts = opts || {writable: true, readable: true}
     var s = createStream(createID(), meta, opts)
     var _opts = {writable: opts.readable, readable: opts.writable}
-    md.emit('data', [s.id, 'new', {meta: meta, opts: _opts}]) 
+    md.emit('data', [s.id, 'new', {meta: meta, opts: _opts}])
     return s
   }
   outer.createWriteStream = function (meta) {
@@ -3536,9 +3626,9 @@ function MuxDemux (name) {
 module.exports = MuxDemux
 });
 
-require.define("/node_modules/mux-demux/node_modules/event-stream/package.json",function(require,module,exports,__dirname,__filename,process){module.exports = {}});
+require.define("/node_modules/boot/node_modules/event-stream/package.json",function(require,module,exports,__dirname,__filename,process){module.exports = {}});
 
-require.define("/node_modules/mux-demux/node_modules/event-stream/index.js",function(require,module,exports,__dirname,__filename,process){//filter will reemit the data if cb(err,pass) pass is truthy
+require.define("/node_modules/boot/node_modules/event-stream/index.js",function(require,module,exports,__dirname,__filename,process){//filter will reemit the data if cb(err,pass) pass is truthy
 // reduce is more tricky
 // maybe we want to group the reductions or emit progress updates occasionally
 // the most basic reduce just emits one 'data' event after it has recieved 'end'
@@ -4184,9 +4274,9 @@ es.pipeable = function () {
 }
 });
 
-require.define("/node_modules/mux-demux/node_modules/event-stream/node_modules/through/package.json",function(require,module,exports,__dirname,__filename,process){module.exports = {"main":"index.js"}});
+require.define("/node_modules/boot/node_modules/event-stream/node_modules/through/package.json",function(require,module,exports,__dirname,__filename,process){module.exports = {"main":"index.js"}});
 
-require.define("/node_modules/mux-demux/node_modules/event-stream/node_modules/through/index.js",function(require,module,exports,__dirname,__filename,process){var Stream = require('stream')
+require.define("/node_modules/boot/node_modules/event-stream/node_modules/through/index.js",function(require,module,exports,__dirname,__filename,process){var Stream = require('stream')
 
 // through
 //
@@ -4253,2071 +4343,155 @@ function through (write, end) {
 
 });
 
-require.define("/node_modules/upnode/package.json",function(require,module,exports,__dirname,__filename,process){module.exports = {"main":"index.js"}});
+require.define("/node_modules/boot/node_modules/through/package.json",function(require,module,exports,__dirname,__filename,process){module.exports = {"main":"index.js"}});
 
-require.define("/node_modules/upnode/index.js",function(require,module,exports,__dirname,__filename,process){var dnode = require('dnode');
-var parseArgs = require('dnode/lib/parse_args');
-var net = require('net');
-var EventEmitter = require('events').EventEmitter;
+require.define("/node_modules/boot/node_modules/through/index.js",function(require,module,exports,__dirname,__filename,process){var Stream = require('stream')
 
-var serverHandle = require('./lib/server_handle');
-
-var upnode = module.exports = function (cons) {
-    var self = {};
-    self.connect = function () {
-        var args = [].slice.call(arguments);
-        var up = createConnectionUp();
-        if (!self._ups) self._ups = [];
-        self._ups.push(up);
-        return connect.apply(null, [ up, cons ].concat(args));
-    };
-    
-    self.writable = true;
-    self.readable = true;
-    
-    var names = Object.keys(EventEmitter.prototype).concat(
-        'pipe', 'write', 'end', 'destroy'
-    );
-    names.forEach(function (name) {
-        self[name] = function (buf) {
-            var h = self._serverHandle;
-            if (!h) h = self._serverHandle = serverHandle(cons);
-            return h[name].apply(h, arguments);
-        };
-    });
-    
-    self.listen = function () {
-        var args = parseArgs(arguments);
-        
-        var server = net.createServer();
-        server._ds = [];
-        
-        server.on('connection', function (stream) {
-            var d = serverHandle(cons);
-            d.stream = stream;
-            d.pipe(stream).pipe(d);
-            
-            server._ds.push(d);
-            d.once('done', function () {
-                var ix = server._ds.indexOf(d);
-                if (ix >= 0) server._ds.splice(ix, 1);
-            });
-        });
-        
-        if (args.port) {
-            server.listen(args.port, args.host, args.block);
-        }
-        else if (args.path) {
-            server.listen(args.path, args.block);
-        }
-        else throw new Error("no port or path given to .listen()");
-        
-        if (!self.close) {
-            self._servers = [];
-            self.close = function () {
-                self._closed = true;
-                self._servers.forEach(function (s) {
-                    if (!s._closed) s.close();
-                    s._closed = true;
-                });
-            };
-        }
-        self._servers.push(server);
-        
-        if (!server.end) server.end = function () {
-            (self._servers || []).forEach(function (server) {
-                (server._ds || []).forEach(function (c) {
-                    c.destroy();
-                });
-            });
-        };
-        
-        self.end = function () {
-            if (!self._closed) self.close();
-            
-            (self._servers || []).forEach(function (server) {
-                server.end();
-            });
-            (self._ups || []).forEach(function (up) {
-                up.end();
-            });
-        };
-        
-        return server;
-    };
-    
-    return self;
-};
-
-function createConnectionUp () {
-    var up = function (t, fn) {
-        if (typeof t === 'function') {
-            fn = t;
-            t = 0;
-        }
-        
-        if (up.remote) fn(up.remote, up.conn)
-        else if (t) {
-            var f = function () {
-                clearTimeout(to);
-                fn.apply(null, arguments);
-            };
-            var to = setTimeout(function () {
-                var ix = up.queue.indexOf(f);
-                if (ix >= 0) up.queue.splice(ix, 1);
-                fn();
-            }, t);
-            up.queue.push(f);
-        }
-        else up.queue.push(fn)
-    };
-    up.conn = null;
-    up.remote = null;
-    up.queue = [];
-    
-    up.close = function () {
-        up.closed = true;
-        if (up.conn) up.conn.end();
-        up.emit('close');
-    };
-    var emitter = new EventEmitter;
-    Object.keys(EventEmitter.prototype).forEach(function (name) {
-        if (typeof emitter[name] === 'function') {
-            up[name] = emitter[name].bind(emitter);
-        }
-        else up[name] = emitter[name];
-    });
-    
-    return up;
-}
-
-upnode.connect = function () {
-    return upnode({}).connect.apply(null, arguments);
-};
-
-upnode.listen = function () {
-    return upnode({}).listen.apply(null, arguments);
-};
-
-function connect (up, cons) {
-    if (up.closed) return;
-    
-    var opts = parseArgs([].slice.call(arguments, 2));
-    var reconnect = (function (args) {
-        return function () {
-            up.emit('reconnect');
-            connect.apply(null, args);
-        };
-    })(arguments);
-    
-    var cb = opts.block || function (remote, conn) {
-        conn.emit('up', remote);
-    };
-    
-    if (opts.ping === undefined) opts.ping = 10000;
-    if (opts.timeout === undefined) opts.timeout = 5000;
-    if (opts.reconnect === undefined) opts.reconnect = 1000;
-    if (opts.createStream === undefined) {
-        opts.createStream = function () {
-            return net.connect(opts.port, opts.host);
-        }
-    }
-    
-    var client = dnode(function (remote, conn) {
-        var res = cons || {};
-        if (typeof cons === 'function') {
-            res = cons.call(this, remote, conn);
-            if (res === undefined) res = this;
-        }
-        
-        if (!res) res = {};
-        if (!res.ping) res.ping = function (cb) {
-            if (typeof cb === 'function') cb();
-        };
-        
-        return res;
-    });
-    
-    client.once('up', function (r) {
-        up.remote = r;
-        up.queue.forEach(function (fn) { fn(up.remote, up.conn) });
-        up.queue = [];
-        up.emit('up', r);
-    });
-    
-    client.on('remote', function (remote) {
-        up.conn = client;
-        if (opts.ping && typeof remote.ping !== 'function') {
-            up.emit('error', new Error(
-                'Remote does not implement ping. '
-                + 'Add server.use(require(\'upnode\').ping) to the remote.'
-            ));
-        }
-        else if (opts.ping) {
-            pinger = setInterval(function () {
-                var t0 = Date.now();
-                var to = opts.timeout && setTimeout(function () {
-                    clearInterval(pinger);
-                    conn.end();
-                    stream.destroy();
-                }, opts.timeout);
-                
-                remote.ping(function () {
-                    var elapsed = Date.now() - t0;
-                    if (to) clearTimeout(to);
-                    up.emit('ping', elapsed);
-                });
-            }, opts.ping);
-        }
-    });
-    
-    var alive = true;
-    var onend = function () {
-        var isUp = Boolean(up.conn);
-        up.conn = null;
-        up.remote = null;
-        up.stream = null;
-        stream.destroy();
-        
-        if (alive && !up.closed) setTimeout(reconnect, opts.reconnect);
-        if (pinger) clearInterval(pinger);
-        alive = false;
-        if (isUp) up.emit('down');
-    };
-    var pinger = null;
-    
-    client.on('remote', function (remote) {
-        up.emit('remote', remote, client);
-        up.stream = stream;
-        cb.call(this, remote, client);
-    });
-    var stream = opts.createStream();
-    client.stream = stream;
-    stream.pipe(client).pipe(stream);
-    
-    stream.on('error', onend);
-    stream.on('end', onend);
-    stream.on('close', onend);
-    
-    client.on('error', onend);
-    
-    return up;
-}
-});
-
-require.define("/node_modules/upnode/node_modules/dnode/package.json",function(require,module,exports,__dirname,__filename,process){module.exports = {"main":"./index.js","browserify":"browser.js"}});
-
-require.define("/node_modules/upnode/node_modules/dnode/browser.js",function(require,module,exports,__dirname,__filename,process){var dnode = require('./lib/dnode');
-
-module.exports = function (cons, opts) {
-    return new dnode(cons, opts);
-};
-});
-
-require.define("/node_modules/upnode/node_modules/dnode/lib/dnode.js",function(require,module,exports,__dirname,__filename,process){var protocol = require('dnode-protocol');
-var Stream = require('stream');
-var json = typeof JSON === 'object' ? JSON : require('jsonify');
-
-module.exports = dnode;
-dnode.prototype = {};
-(function () { // browsers etc
-    for (var key in Stream.prototype) {
-        dnode.prototype[key] = Stream.prototype[key];
-    }
-})();
-
-function dnode (cons, opts) {
-    Stream.call(this);
-    var self = this;
-    
-    self.opts = opts || {};
-    
-    self.cons = typeof cons === 'function'
-        ? cons
-        : function () { return cons || {} }
-    ;
-    
-    self.readable = true;
-    self.writable = true;
-    
-    process.nextTick(function () {
-        if (self._ended) return;
-        self.proto = self._createProto();
-        self.proto.start();
-        
-        (self._handleQueue || []).forEach(function (row) {
-            self.handle(row);
-        });
-    });
-}
-
-dnode.prototype._createProto = function () {
-    var self = this;
-    var proto = protocol(function (remote) {
-        if (self._ended) return;
-        
-        var ref = self.cons.call(this, remote, self);
-        if (typeof ref !== 'object') ref = this;
-        
-        self.emit('local', ref, self);
-        
-        return ref;
-    }, self.opts.proto);
-    
-    proto.on('remote', function (remote) {
-        self.emit('remote', remote, self);
-        self.emit('ready'); // backwards compatability, deprecated
-    });
-    
-    proto.on('request', function (req) {
-        if (!self.readable) return;
-        
-        if (self.opts.emit === 'object') {
-            self.emit('data', req);
-        }
-        else self.emit('data', json.stringify(req) + '\n');
-    });
-    
-    proto.on('fail', function (err) {
-        // errors that the remote end was responsible for
-        self.emit('fail', err);
-    });
-    
-    proto.on('error', function (err) {
-        // errors that the local code was responsible for
-        self.emit('error', err);
-    });
-    
-    return proto;
-};
-
-dnode.prototype.write = function (buf) {
-    if (this._ended) return;
-    var self = this;
-    var row;
-    
-    if (buf && typeof buf === 'object'
-    && buf.constructor && buf.constructor.name === 'Buffer'
-    && buf.length
-    && typeof buf.slice === 'function') {
-        // treat like a buffer
-        if (!self._bufs) self._bufs = [];
-        
-        // treat like a buffer
-        for (var i = 0, j = 0; i < buf.length; i++) {
-            if (buf[i] === 0x0a) {
-                self._bufs.push(buf.slice(j, i));
-                
-                var line = '';
-                for (var k = 0; k < self._bufs.length; k++) {
-                    line += String(self._bufs[k]);
-                }
-                
-                try { row = json.parse(line) }
-                catch (err) { return self.end() }
-                
-                j = i + 1;
-                
-                self.handle(row);
-                self._bufs = [];
-            }
-        }
-        
-        if (j < buf.length) self._bufs.push(buf.slice(j, buf.length));
-    }
-    else if (buf && typeof buf === 'object') {
-        // .isBuffer() without the Buffer
-        // Use self to pipe JSONStream.parse() streams.
-        self.handle(buf);
-    }
-    else {
-        if (typeof buf !== 'string') buf = String(buf);
-        if (!self._line) self._line = '';
-        
-        for (var i = 0; i < buf.length; i++) {
-            if (buf.charCodeAt(i) === 0x0a) {
-                try { row = json.parse(self._line) }
-                catch (err) { return self.end() }
-                
-                self.handle(row);
-                self._line = '';
-            }
-            else self._line += buf.charAt(i)
-        }
-    }
-};
-
-dnode.prototype.handle = function (row) {
-    if (!this.proto) {
-        if (!this._handleQueue) this._handleQueue = [];
-        this._handleQueue.push(row);
-    }
-    else this.proto.handle(row);
-};
-
-dnode.prototype.end = function () {
-    if (this._ended) return;
-    this._ended = true;
-    this.writable = false;
-    this.readable = false;
-    this.emit('end');
-};
-
-dnode.prototype.destroy = function () {
-    this.end();
-};
-});
-
-require.define("/node_modules/upnode/node_modules/dnode/node_modules/dnode-protocol/package.json",function(require,module,exports,__dirname,__filename,process){module.exports = {"main":"./index.js"}});
-
-require.define("/node_modules/upnode/node_modules/dnode/node_modules/dnode-protocol/index.js",function(require,module,exports,__dirname,__filename,process){var EventEmitter = require('events').EventEmitter;
-var scrubber = require('./lib/scrub');
-var objectKeys = require('./lib/keys');
-var forEach = require('./lib/foreach');
-var isEnumerable = require('./lib/is_enum');
-
-module.exports = function (cons, opts) {
-    return new Proto(cons, opts);
-};
-
-(function () { // browsers bleh
-    for (var key in EventEmitter.prototype) {
-        Proto.prototype[key] = EventEmitter.prototype[key];
-    }
-})();
-
-function Proto (cons, opts) {
-    var self = this;
-    EventEmitter.call(self);
-    if (!opts) opts = {};
-    
-    self.remote = {};
-    self.callbacks = { local : [], remote : [] };
-    self.wrap = opts.wrap;
-    self.unwrap = opts.unwrap;
-    
-    self.scrubber = scrubber(self.callbacks.local);
-    
-    if (typeof cons === 'function') {
-        self.instance = new cons(self.remote, self);
-    }
-    else self.instance = cons || {};
-}
-
-Proto.prototype.start = function () {
-    this.request('methods', [ this.instance ]);
-};
-
-Proto.prototype.cull = function (id) {
-    delete this.callbacks.remote[id];
-    this.emit('request', {
-        method : 'cull',
-        arguments : [ id ]
-    });
-};
-
-Proto.prototype.request = function (method, args) {
-    var scrub = this.scrubber.scrub(args);
-    
-    this.emit('request', {
-        method : method,
-        arguments : scrub.arguments,
-        callbacks : scrub.callbacks,
-        links : scrub.links
-    });
-};
-
-Proto.prototype.handle = function (req) {
-    var self = this;
-    var args = self.scrubber.unscrub(req, function (id) {
-        if (self.callbacks.remote[id] === undefined) {
-            // create a new function only if one hasn't already been created
-            // for a particular id
-            var cb = function () {
-                self.request(id, [].slice.apply(arguments));
-            };
-            self.callbacks.remote[id] = self.wrap ? self.wrap(cb, id) : cb;
-            return cb;
-        }
-        return self.unwrap
-            ? self.unwrap(self.callbacks.remote[id], id)
-            : self.callbacks.remote[id]
-        ;
-    });
-    
-    if (req.method === 'methods') {
-        self.handleMethods(args[0]);
-    }
-    else if (req.method === 'cull') {
-        forEach(args, function (id) {
-            delete self.callbacks.local[id];
-        });
-    }
-    else if (typeof req.method === 'string') {
-        if (isEnumerable(self.instance, req.method)) {
-            self.apply(self.instance[req.method], args);
-        }
-        else {
-            self.emit('fail', new Error(
-                'request for non-enumerable method: ' + req.method
-            ));
-        }
-    }
-    else if (typeof req.method == 'number') {
-        var fn = self.callbacks.local[req.method];
-        if (!fn) {
-            self.emit('fail', new Error('no such method'));
-        }
-        else self.apply(fn, args);
-    }
-};
-
-Proto.prototype.handleMethods = function (methods) {
-    var self = this;
-    if (typeof methods != 'object') {
-        methods = {};
-    }
-    
-    // copy since assignment discards the previous refs
-    forEach(objectKeys(self.remote), function (key) {
-        delete self.remote[key];
-    });
-    
-    forEach(objectKeys(methods), function (key) {
-        self.remote[key] = methods[key];
-    });
-    
-    self.emit('remote', self.remote);
-    self.emit('ready');
-};
-
-Proto.prototype.apply = function (f, args) {
-    try { f.apply(undefined, args) }
-    catch (err) { this.emit('error', err) }
-};
-});
-
-require.define("/node_modules/upnode/node_modules/dnode/node_modules/dnode-protocol/lib/scrub.js",function(require,module,exports,__dirname,__filename,process){var traverse = require('traverse');
-var objectKeys = require('./keys');
-var forEach = require('./foreach');
-
-function indexOf (xs, x) {
-    if (xs.indexOf) return xs.indexOf(x);
-    for (var i = 0; i < xs.length; i++) if (xs[i] === x) return i;
-    return -1;
-}
-
-// scrub callbacks out of requests in order to call them again later
-module.exports = function (callbacks) {
-    return new Scrubber(callbacks);
-};
-
-function Scrubber (callbacks) {
-    this.callbacks = callbacks;
-}
-
-// Take the functions out and note them for future use
-Scrubber.prototype.scrub = function (obj) {
-    var self = this;
-    var paths = {};
-    var links = [];
-    
-    var args = traverse(obj).map(function (node) {
-        if (typeof node === 'function') {
-            var i = indexOf(self.callbacks, node);
-            if (i >= 0 && !(i in paths)) {
-                // Keep previous function IDs only for the first function
-                // found. This is somewhat suboptimal but the alternatives
-                // are worse.
-                paths[i] = this.path;
-            }
-            else {
-                var id = self.callbacks.length;
-                self.callbacks.push(node);
-                paths[id] = this.path;
-            }
-            
-            this.update('[Function]');
-        }
-        else if (this.circular) {
-            links.push({ from : this.circular.path, to : this.path });
-            this.update('[Circular]');
-        }
-    });
-    
-    return {
-        arguments : args,
-        callbacks : paths,
-        links : links
-    };
-};
- 
-// Replace callbacks. The supplied function should take a callback id and
-// return a callback of its own.
-Scrubber.prototype.unscrub = function (msg, f) {
-    var args = msg.arguments || [];
-    forEach(objectKeys(msg.callbacks || {}), function (sid) {
-        var id = parseInt(sid, 10);
-        var path = msg.callbacks[id];
-        traverse.set(args, path, f(id));
-    });
-    
-    forEach(msg.links || [], function (link) {
-        var value = traverse.get(args, link.from);
-        traverse.set(args, link.to, value);
-    });
-    
-    return args;
-};
-});
-
-require.define("/node_modules/upnode/node_modules/dnode/node_modules/dnode-protocol/node_modules/traverse/package.json",function(require,module,exports,__dirname,__filename,process){module.exports = {"main":"index.js"}});
-
-require.define("/node_modules/upnode/node_modules/dnode/node_modules/dnode-protocol/node_modules/traverse/index.js",function(require,module,exports,__dirname,__filename,process){var traverse = module.exports = function (obj) {
-    return new Traverse(obj);
-};
-
-function Traverse (obj) {
-    this.value = obj;
-}
-
-Traverse.prototype.get = function (ps) {
-    var node = this.value;
-    for (var i = 0; i < ps.length; i ++) {
-        var key = ps[i];
-        if (!Object.hasOwnProperty.call(node, key)) {
-            node = undefined;
-            break;
-        }
-        node = node[key];
-    }
-    return node;
-};
-
-Traverse.prototype.has = function (ps) {
-    var node = this.value;
-    for (var i = 0; i < ps.length; i ++) {
-        var key = ps[i];
-        if (!Object.hasOwnProperty.call(node, key)) {
-            return false;
-        }
-        node = node[key];
-    }
-    return true;
-};
-
-Traverse.prototype.set = function (ps, value) {
-    var node = this.value;
-    for (var i = 0; i < ps.length - 1; i ++) {
-        var key = ps[i];
-        if (!Object.hasOwnProperty.call(node, key)) node[key] = {};
-        node = node[key];
-    }
-    node[ps[i]] = value;
-    return value;
-};
-
-Traverse.prototype.map = function (cb) {
-    return walk(this.value, cb, true);
-};
-
-Traverse.prototype.forEach = function (cb) {
-    this.value = walk(this.value, cb, false);
-    return this.value;
-};
-
-Traverse.prototype.reduce = function (cb, init) {
-    var skip = arguments.length === 1;
-    var acc = skip ? this.value : init;
-    this.forEach(function (x) {
-        if (!this.isRoot || !skip) {
-            acc = cb.call(this, acc, x);
-        }
-    });
-    return acc;
-};
-
-Traverse.prototype.paths = function () {
-    var acc = [];
-    this.forEach(function (x) {
-        acc.push(this.path); 
-    });
-    return acc;
-};
-
-Traverse.prototype.nodes = function () {
-    var acc = [];
-    this.forEach(function (x) {
-        acc.push(this.node);
-    });
-    return acc;
-};
-
-Traverse.prototype.clone = function () {
-    var parents = [], nodes = [];
-    
-    return (function clone (src) {
-        for (var i = 0; i < parents.length; i++) {
-            if (parents[i] === src) {
-                return nodes[i];
-            }
-        }
-        
-        if (typeof src === 'object' && src !== null) {
-            var dst = copy(src);
-            
-            parents.push(src);
-            nodes.push(dst);
-            
-            forEach(objectKeys(src), function (key) {
-                dst[key] = clone(src[key]);
-            });
-            
-            parents.pop();
-            nodes.pop();
-            return dst;
-        }
-        else {
-            return src;
-        }
-    })(this.value);
-};
-
-function walk (root, cb, immutable) {
-    var path = [];
-    var parents = [];
-    var alive = true;
-    
-    return (function walker (node_) {
-        var node = immutable ? copy(node_) : node_;
-        var modifiers = {};
-        
-        var keepGoing = true;
-        
-        var state = {
-            node : node,
-            node_ : node_,
-            path : [].concat(path),
-            parent : parents[parents.length - 1],
-            parents : parents,
-            key : path.slice(-1)[0],
-            isRoot : path.length === 0,
-            level : path.length,
-            circular : null,
-            update : function (x, stopHere) {
-                if (!state.isRoot) {
-                    state.parent.node[state.key] = x;
-                }
-                state.node = x;
-                if (stopHere) keepGoing = false;
-            },
-            'delete' : function (stopHere) {
-                delete state.parent.node[state.key];
-                if (stopHere) keepGoing = false;
-            },
-            remove : function (stopHere) {
-                if (isArray(state.parent.node)) {
-                    state.parent.node.splice(state.key, 1);
-                }
-                else {
-                    delete state.parent.node[state.key];
-                }
-                if (stopHere) keepGoing = false;
-            },
-            keys : null,
-            before : function (f) { modifiers.before = f },
-            after : function (f) { modifiers.after = f },
-            pre : function (f) { modifiers.pre = f },
-            post : function (f) { modifiers.post = f },
-            stop : function () { alive = false },
-            block : function () { keepGoing = false }
-        };
-        
-        if (!alive) return state;
-        
-        function updateState() {
-            if (typeof state.node === 'object' && state.node !== null) {
-                if (!state.keys || state.node_ !== state.node) {
-                    state.keys = objectKeys(state.node)
-                }
-                
-                state.isLeaf = state.keys.length == 0;
-                
-                for (var i = 0; i < parents.length; i++) {
-                    if (parents[i].node_ === node_) {
-                        state.circular = parents[i];
-                        break;
-                    }
-                }
-            }
-            else {
-                state.isLeaf = true;
-                state.keys = null;
-            }
-            
-            state.notLeaf = !state.isLeaf;
-            state.notRoot = !state.isRoot;
-        }
-        
-        updateState();
-        
-        // use return values to update if defined
-        var ret = cb.call(state, state.node);
-        if (ret !== undefined && state.update) state.update(ret);
-        
-        if (modifiers.before) modifiers.before.call(state, state.node);
-        
-        if (!keepGoing) return state;
-        
-        if (typeof state.node == 'object'
-        && state.node !== null && !state.circular) {
-            parents.push(state);
-            
-            updateState();
-            
-            forEach(state.keys, function (key, i) {
-                path.push(key);
-                
-                if (modifiers.pre) modifiers.pre.call(state, state.node[key], key);
-                
-                var child = walker(state.node[key]);
-                if (immutable && Object.hasOwnProperty.call(state.node, key)) {
-                    state.node[key] = child.node;
-                }
-                
-                child.isLast = i == state.keys.length - 1;
-                child.isFirst = i == 0;
-                
-                if (modifiers.post) modifiers.post.call(state, child);
-                
-                path.pop();
-            });
-            parents.pop();
-        }
-        
-        if (modifiers.after) modifiers.after.call(state, state.node);
-        
-        return state;
-    })(root).node;
-}
-
-function copy (src) {
-    if (typeof src === 'object' && src !== null) {
-        var dst;
-        
-        if (isArray(src)) {
-            dst = [];
-        }
-        else if (isDate(src)) {
-            dst = new Date(src);
-        }
-        else if (isRegExp(src)) {
-            dst = new RegExp(src);
-        }
-        else if (isError(src)) {
-            dst = { message: src.message };
-        }
-        else if (isBoolean(src)) {
-            dst = new Boolean(src);
-        }
-        else if (isNumber(src)) {
-            dst = new Number(src);
-        }
-        else if (isString(src)) {
-            dst = new String(src);
-        }
-        else if (Object.create && Object.getPrototypeOf) {
-            dst = Object.create(Object.getPrototypeOf(src));
-        }
-        else if (src.constructor === Object) {
-            dst = {};
-        }
-        else {
-            var proto =
-                (src.constructor && src.constructor.prototype)
-                || src.__proto__
-                || {}
-            ;
-            var T = function () {};
-            T.prototype = proto;
-            dst = new T;
-        }
-        
-        forEach(objectKeys(src), function (key) {
-            dst[key] = src[key];
-        });
-        return dst;
-    }
-    else return src;
-}
-
-var objectKeys = Object.keys || function keys (obj) {
-    var res = [];
-    for (var key in obj) res.push(key)
-    return res;
-};
-
-function toS (obj) { return Object.prototype.toString.call(obj) }
-function isDate (obj) { return toS(obj) === '[object Date]' }
-function isRegExp (obj) { return toS(obj) === '[object RegExp]' }
-function isError (obj) { return toS(obj) === '[object Error]' }
-function isBoolean (obj) { return toS(obj) === '[object Boolean]' }
-function isNumber (obj) { return toS(obj) === '[object Number]' }
-function isString (obj) { return toS(obj) === '[object String]' }
-
-var isArray = Array.isArray || function isArray (xs) {
-    return Object.prototype.toString.call(xs) === '[object Array]';
-};
-
-var forEach = function (xs, fn) {
-    if (xs.forEach) return xs.forEach(fn)
-    else for (var i = 0; i < xs.length; i++) {
-        fn(xs[i], i, xs);
-    }
-};
-
-forEach(objectKeys(Traverse.prototype), function (key) {
-    traverse[key] = function (obj) {
-        var args = [].slice.call(arguments, 1);
-        var t = new Traverse(obj);
-        return t[key].apply(t, args);
-    };
-});
-});
-
-require.define("/node_modules/upnode/node_modules/dnode/node_modules/dnode-protocol/lib/keys.js",function(require,module,exports,__dirname,__filename,process){module.exports = Object.keys || function (obj) {
-    var keys = [];
-    for (var key in obj) keys.push(key);
-    return keys;
-};
-});
-
-require.define("/node_modules/upnode/node_modules/dnode/node_modules/dnode-protocol/lib/foreach.js",function(require,module,exports,__dirname,__filename,process){module.exports = function forEach (xs, f) {
-    if (xs.forEach) return xs.forEach(f)
-    for (var i = 0; i < xs.length; i++) {
-        f.call(xs, xs[i], i);
-    }
-}
-});
-
-require.define("/node_modules/upnode/node_modules/dnode/node_modules/dnode-protocol/lib/is_enum.js",function(require,module,exports,__dirname,__filename,process){var objectKeys = require('./keys');
-
-module.exports = function (obj, key) {
-    if (Object.prototype.propertyIsEnumerable) {
-        return Object.prototype.propertyIsEnumerable.call(obj, key);
-    }
-    var keys = objectKeys(obj);
-    for (var i = 0; i < keys.length; i++) {
-        if (key === keys[i]) return true;
-    }
-    return false;
-};
-});
-
-require.define("/node_modules/upnode/node_modules/dnode/node_modules/jsonify/package.json",function(require,module,exports,__dirname,__filename,process){module.exports = {"main":"index.js"}});
-
-require.define("/node_modules/upnode/node_modules/dnode/node_modules/jsonify/index.js",function(require,module,exports,__dirname,__filename,process){exports.parse = require('./lib/parse');
-exports.stringify = require('./lib/stringify');
-});
-
-require.define("/node_modules/upnode/node_modules/dnode/node_modules/jsonify/lib/parse.js",function(require,module,exports,__dirname,__filename,process){var at, // The index of the current character
-    ch, // The current character
-    escapee = {
-        '"':  '"',
-        '\\': '\\',
-        '/':  '/',
-        b:    '\b',
-        f:    '\f',
-        n:    '\n',
-        r:    '\r',
-        t:    '\t'
-    },
-    text,
-
-    error = function (m) {
-        // Call error when something is wrong.
-        throw {
-            name:    'SyntaxError',
-            message: m,
-            at:      at,
-            text:    text
-        };
-    },
-    
-    next = function (c) {
-        // If a c parameter is provided, verify that it matches the current character.
-        if (c && c !== ch) {
-            error("Expected '" + c + "' instead of '" + ch + "'");
-        }
-        
-        // Get the next character. When there are no more characters,
-        // return the empty string.
-        
-        ch = text.charAt(at);
-        at += 1;
-        return ch;
-    },
-    
-    number = function () {
-        // Parse a number value.
-        var number,
-            string = '';
-        
-        if (ch === '-') {
-            string = '-';
-            next('-');
-        }
-        while (ch >= '0' && ch <= '9') {
-            string += ch;
-            next();
-        }
-        if (ch === '.') {
-            string += '.';
-            while (next() && ch >= '0' && ch <= '9') {
-                string += ch;
-            }
-        }
-        if (ch === 'e' || ch === 'E') {
-            string += ch;
-            next();
-            if (ch === '-' || ch === '+') {
-                string += ch;
-                next();
-            }
-            while (ch >= '0' && ch <= '9') {
-                string += ch;
-                next();
-            }
-        }
-        number = +string;
-        if (!isFinite(number)) {
-            error("Bad number");
-        } else {
-            return number;
-        }
-    },
-    
-    string = function () {
-        // Parse a string value.
-        var hex,
-            i,
-            string = '',
-            uffff;
-        
-        // When parsing for string values, we must look for " and \ characters.
-        if (ch === '"') {
-            while (next()) {
-                if (ch === '"') {
-                    next();
-                    return string;
-                } else if (ch === '\\') {
-                    next();
-                    if (ch === 'u') {
-                        uffff = 0;
-                        for (i = 0; i < 4; i += 1) {
-                            hex = parseInt(next(), 16);
-                            if (!isFinite(hex)) {
-                                break;
-                            }
-                            uffff = uffff * 16 + hex;
-                        }
-                        string += String.fromCharCode(uffff);
-                    } else if (typeof escapee[ch] === 'string') {
-                        string += escapee[ch];
-                    } else {
-                        break;
-                    }
-                } else {
-                    string += ch;
-                }
-            }
-        }
-        error("Bad string");
-    },
-
-    white = function () {
-
-// Skip whitespace.
-
-        while (ch && ch <= ' ') {
-            next();
-        }
-    },
-
-    word = function () {
-
-// true, false, or null.
-
-        switch (ch) {
-        case 't':
-            next('t');
-            next('r');
-            next('u');
-            next('e');
-            return true;
-        case 'f':
-            next('f');
-            next('a');
-            next('l');
-            next('s');
-            next('e');
-            return false;
-        case 'n':
-            next('n');
-            next('u');
-            next('l');
-            next('l');
-            return null;
-        }
-        error("Unexpected '" + ch + "'");
-    },
-
-    value,  // Place holder for the value function.
-
-    array = function () {
-
-// Parse an array value.
-
-        var array = [];
-
-        if (ch === '[') {
-            next('[');
-            white();
-            if (ch === ']') {
-                next(']');
-                return array;   // empty array
-            }
-            while (ch) {
-                array.push(value());
-                white();
-                if (ch === ']') {
-                    next(']');
-                    return array;
-                }
-                next(',');
-                white();
-            }
-        }
-        error("Bad array");
-    },
-
-    object = function () {
-
-// Parse an object value.
-
-        var key,
-            object = {};
-
-        if (ch === '{') {
-            next('{');
-            white();
-            if (ch === '}') {
-                next('}');
-                return object;   // empty object
-            }
-            while (ch) {
-                key = string();
-                white();
-                next(':');
-                if (Object.hasOwnProperty.call(object, key)) {
-                    error('Duplicate key "' + key + '"');
-                }
-                object[key] = value();
-                white();
-                if (ch === '}') {
-                    next('}');
-                    return object;
-                }
-                next(',');
-                white();
-            }
-        }
-        error("Bad object");
-    };
-
-value = function () {
-
-// Parse a JSON value. It could be an object, an array, a string, a number,
-// or a word.
-
-    white();
-    switch (ch) {
-    case '{':
-        return object();
-    case '[':
-        return array();
-    case '"':
-        return string();
-    case '-':
-        return number();
-    default:
-        return ch >= '0' && ch <= '9' ? number() : word();
-    }
-};
-
-// Return the json_parse function. It will have access to all of the above
-// functions and variables.
-
-module.exports = function (source, reviver) {
-    var result;
-    
-    text = source;
-    at = 0;
-    ch = ' ';
-    result = value();
-    white();
-    if (ch) {
-        error("Syntax error");
-    }
-
-    // If there is a reviver function, we recursively walk the new structure,
-    // passing each name/value pair to the reviver function for possible
-    // transformation, starting with a temporary root object that holds the result
-    // in an empty key. If there is not a reviver function, we simply return the
-    // result.
-
-    return typeof reviver === 'function' ? (function walk(holder, key) {
-        var k, v, value = holder[key];
-        if (value && typeof value === 'object') {
-            for (k in value) {
-                if (Object.prototype.hasOwnProperty.call(value, k)) {
-                    v = walk(value, k);
-                    if (v !== undefined) {
-                        value[k] = v;
-                    } else {
-                        delete value[k];
-                    }
-                }
-            }
-        }
-        return reviver.call(holder, key, value);
-    }({'': result}, '')) : result;
-};
-});
-
-require.define("/node_modules/upnode/node_modules/dnode/node_modules/jsonify/lib/stringify.js",function(require,module,exports,__dirname,__filename,process){var cx = /[\u0000\u00ad\u0600-\u0604\u070f\u17b4\u17b5\u200c-\u200f\u2028-\u202f\u2060-\u206f\ufeff\ufff0-\uffff]/g,
-    escapable = /[\\\"\x00-\x1f\x7f-\x9f\u00ad\u0600-\u0604\u070f\u17b4\u17b5\u200c-\u200f\u2028-\u202f\u2060-\u206f\ufeff\ufff0-\uffff]/g,
-    gap,
-    indent,
-    meta = {    // table of character substitutions
-        '\b': '\\b',
-        '\t': '\\t',
-        '\n': '\\n',
-        '\f': '\\f',
-        '\r': '\\r',
-        '"' : '\\"',
-        '\\': '\\\\'
-    },
-    rep;
-
-function quote(string) {
-    // If the string contains no control characters, no quote characters, and no
-    // backslash characters, then we can safely slap some quotes around it.
-    // Otherwise we must also replace the offending characters with safe escape
-    // sequences.
-    
-    escapable.lastIndex = 0;
-    return escapable.test(string) ? '"' + string.replace(escapable, function (a) {
-        var c = meta[a];
-        return typeof c === 'string' ? c :
-            '\\u' + ('0000' + a.charCodeAt(0).toString(16)).slice(-4);
-    }) + '"' : '"' + string + '"';
-}
-
-function str(key, holder) {
-    // Produce a string from holder[key].
-    var i,          // The loop counter.
-        k,          // The member key.
-        v,          // The member value.
-        length,
-        mind = gap,
-        partial,
-        value = holder[key];
-    
-    // If the value has a toJSON method, call it to obtain a replacement value.
-    if (value && typeof value === 'object' &&
-            typeof value.toJSON === 'function') {
-        value = value.toJSON(key);
-    }
-    
-    // If we were called with a replacer function, then call the replacer to
-    // obtain a replacement value.
-    if (typeof rep === 'function') {
-        value = rep.call(holder, key, value);
-    }
-    
-    // What happens next depends on the value's type.
-    switch (typeof value) {
-        case 'string':
-            return quote(value);
-        
-        case 'number':
-            // JSON numbers must be finite. Encode non-finite numbers as null.
-            return isFinite(value) ? String(value) : 'null';
-        
-        case 'boolean':
-        case 'null':
-            // If the value is a boolean or null, convert it to a string. Note:
-            // typeof null does not produce 'null'. The case is included here in
-            // the remote chance that this gets fixed someday.
-            return String(value);
-            
-        case 'object':
-            if (!value) return 'null';
-            gap += indent;
-            partial = [];
-            
-            // Array.isArray
-            if (Object.prototype.toString.apply(value) === '[object Array]') {
-                length = value.length;
-                for (i = 0; i < length; i += 1) {
-                    partial[i] = str(i, value) || 'null';
-                }
-                
-                // Join all of the elements together, separated with commas, and
-                // wrap them in brackets.
-                v = partial.length === 0 ? '[]' : gap ?
-                    '[\n' + gap + partial.join(',\n' + gap) + '\n' + mind + ']' :
-                    '[' + partial.join(',') + ']';
-                gap = mind;
-                return v;
-            }
-            
-            // If the replacer is an array, use it to select the members to be
-            // stringified.
-            if (rep && typeof rep === 'object') {
-                length = rep.length;
-                for (i = 0; i < length; i += 1) {
-                    k = rep[i];
-                    if (typeof k === 'string') {
-                        v = str(k, value);
-                        if (v) {
-                            partial.push(quote(k) + (gap ? ': ' : ':') + v);
-                        }
-                    }
-                }
-            }
-            else {
-                // Otherwise, iterate through all of the keys in the object.
-                for (k in value) {
-                    if (Object.prototype.hasOwnProperty.call(value, k)) {
-                        v = str(k, value);
-                        if (v) {
-                            partial.push(quote(k) + (gap ? ': ' : ':') + v);
-                        }
-                    }
-                }
-            }
-            
-        // Join all of the member texts together, separated with commas,
-        // and wrap them in braces.
-
-        v = partial.length === 0 ? '{}' : gap ?
-            '{\n' + gap + partial.join(',\n' + gap) + '\n' + mind + '}' :
-            '{' + partial.join(',') + '}';
-        gap = mind;
-        return v;
-    }
-}
-
-module.exports = function (value, replacer, space) {
-    var i;
-    gap = '';
-    indent = '';
-    
-    // If the space parameter is a number, make an indent string containing that
-    // many spaces.
-    if (typeof space === 'number') {
-        for (i = 0; i < space; i += 1) {
-            indent += ' ';
-        }
-    }
-    // If the space parameter is a string, it will be used as the indent string.
-    else if (typeof space === 'string') {
-        indent = space;
-    }
-
-    // If there is a replacer, it must be a function or an array.
-    // Otherwise, throw an error.
-    rep = replacer;
-    if (replacer && typeof replacer !== 'function'
-    && (typeof replacer !== 'object' || typeof replacer.length !== 'number')) {
-        throw new Error('JSON.stringify');
-    }
-    
-    // Make a fake root object containing our value under the key of ''.
-    // Return the result of stringifying the value.
-    return str('', {'': value});
-};
-});
-
-require.define("/node_modules/upnode/node_modules/dnode/lib/parse_args.js",function(require,module,exports,__dirname,__filename,process){module.exports = function (argv) {
-    var params = {};
-    for (var i = 0; i < argv.length; i++) {
-        var arg = argv[i];
-        
-        if (typeof arg === 'string') {
-            if (arg.match(/^\d+$/)) {
-                params.port = parseInt(arg, 10);
-            }
-            else if (arg.match('^/')) {
-                params.path = arg;
-            }
-            else {
-                params.host = arg;
-            }
-        }
-        else if (typeof arg === 'number') {
-            params.port = arg;
-        }
-        else if (typeof arg === 'function') {
-            params.block = arg;
-        }
-        else if (typeof arg === 'object') {
-            for (var key in arg) {
-                if (key === 'port') {
-                    params[key] = parseInt(arg[key], 10)
-                }
-                else params[key] = arg[key]
-            }
-        }
-        // ignore everything else
-    };
-    
-    return params;
-};
-});
-
-require.define("net",function(require,module,exports,__dirname,__filename,process){// todo
-});
-
-require.define("/node_modules/upnode/lib/server_handle.js",function(require,module,exports,__dirname,__filename,process){var dnode = require('dnode');
-
-module.exports = function (cons) {
-    var d = dnode(cons);
-    
-    d.on('local', function (local) {
-        if (local.ping === undefined) {
-            local.ping = function (cb) {
-                if (typeof cb === 'function') cb();
-            };
-        }
-    });
-    
-    d.on('remote', function (remote) {
-        var iv = setInterval(function () {
-            if (typeof remote.ping === 'function') {
-                var to = setTimeout(function () {
-                    d.end();
-                }, 10 * 10000);
-                
-                remote.ping(function () {
-                    clearTimeout(to);
-                });
-            }
-        }, 10 * 1000);
-        
-        var onend = function () {
-            stream.destroy();
-            clearInterval(iv);
-            
-            if (!d._done) {
-                d._done = true;
-                d.emit('done');
-            }
-        };
-        
-        stream.once('end', onend);
-        stream.once('disconnect', onend);
-        stream.once('close', onend);
-        stream.once('error', onend);
-    });
-    
-    var stream;
-    d.on('pipe', function (target) {
-        if (!stream) stream = target;
-    });
-    
-    return d;
-}
-});
-
-require.define("/node_modules/node-uuid/package.json",function(require,module,exports,__dirname,__filename,process){module.exports = {"main":"./uuid.js"}});
-
-require.define("/node_modules/node-uuid/uuid.js",function(require,module,exports,__dirname,__filename,process){//     node-uuid/uuid.js
+// through
 //
-//     Copyright (c) 2010 Robert Kieffer
-//     Dual licensed under the MIT and GPL licenses.
-//     Documentation and details at https://github.com/broofa/node-uuid
-(function() {
-  var _global = this;
+// a stream that does nothing but re-emit the input.
+// useful for aggregating a series of changing but not ending streams into one stream)
 
-  // Unique ID creation requires a high quality random # generator, but
-  // Math.random() does not guarantee "cryptographic quality".  So we feature
-  // detect for more robust APIs, normalizing each method to return 128-bits
-  // (16 bytes) of random data.
-  var mathRNG, nodeRNG, whatwgRNG;
+exports = module.exports = through
+through.through = through
 
-  // Math.random()-based RNG.  All platforms, very fast, unknown quality
-  var _rndBytes = new Array(16);
-  mathRNG = function() {
-    var r, b = _rndBytes, i = 0;
+//create a readable writable stream.
 
-    for (var i = 0, r; i < 16; i++) {
-      if ((i & 0x03) == 0) r = Math.random() * 0x100000000;
-      b[i] = r >>> ((i & 0x03) << 3) & 0xff;
-    }
+function through (write, end) {
+  write = write || function (data) { this.emit('data', data) }
+  end = end || function () { this.emit('end') }
 
-    return b;
+  var ended = false, destroyed = false
+  var stream = new Stream()
+  stream.readable = stream.writable = true
+  stream.paused = false  
+  stream.write = function (data) {
+    write.call(this, data)
+    return !stream.paused
   }
+  //this will be registered as the first 'end' listener
+  //must call destroy next tick, to make sure we're after any
+  //stream piped from here. 
+  stream.on('end', function () {
+    stream.readable = false
+    if(!stream.writable)
+      process.nextTick(function () {
+        stream.destroy()
+      })
+  })
 
-  // WHATWG crypto-based RNG - http://wiki.whatwg.org/wiki/Crypto
-  // WebKit only (currently), moderately fast, high quality
-  if (_global.crypto && crypto.getRandomValues) {
-    var _rnds = new Uint32Array(4);
-    whatwgRNG = function() {
-      crypto.getRandomValues(_rnds);
-
-      for (var c = 0 ; c < 16; c++) {
-        _rndBytes[c] = _rnds[c >> 2] >>> ((c & 0x03) * 8) & 0xff;
-      }
-      return _rndBytes;
-    }
+  stream.end = function (data) {
+    if(ended) return 
+    //this breaks, because pipe doesn't check writable before calling end.
+    //throw new Error('cannot call end twice')
+    ended = true
+    if(arguments.length) stream.write(data)
+    this.writable = false
+    end.call(this)
+    if(!this.readable)
+      this.destroy()
   }
-
-  // Node.js crypto-based RNG - http://nodejs.org/docs/v0.6.2/api/crypto.html
-  // Node.js only, moderately fast, high quality
-  try {
-    var _rb = require('crypto').randomBytes;
-    nodeRNG = _rb && function() {
-      return _rb(16);
-    };
-  } catch (e) {}
-
-  // Select RNG with best quality
-  var _rng = nodeRNG || whatwgRNG || mathRNG;
-
-  // Buffer class to use
-  var BufferClass = typeof(Buffer) == 'function' ? Buffer : Array;
-
-  // Maps for number <-> hex string conversion
-  var _byteToHex = [];
-  var _hexToByte = {};
-  for (var i = 0; i < 256; i++) {
-    _byteToHex[i] = (i + 0x100).toString(16).substr(1);
-    _hexToByte[_byteToHex[i]] = i;
+  stream.destroy = function () {
+    if(destroyed) return
+    destroyed = true
+    ended = true
+    stream.writable = stream.readable = false
+    stream.emit('close')
   }
-
-  // **`parse()` - Parse a UUID into it's component bytes**
-  function parse(s, buf, offset) {
-    var i = (buf && offset) || 0, ii = 0;
-
-    buf = buf || [];
-    s.toLowerCase().replace(/[0-9a-f]{2}/g, function(byte) {
-      if (ii < 16) { // Don't overflow!
-        buf[i + ii++] = _hexToByte[byte];
-      }
-    });
-
-    // Zero out remaining bytes if string was short
-    while (ii < 16) {
-      buf[i + ii++] = 0;
-    }
-
-    return buf;
+  stream.pause = function () {
+    if(stream.paused) return
+    stream.paused = true
+    stream.emit('pause')
   }
-
-  // **`unparse()` - Convert UUID byte array (ala parse()) into a string**
-  function unparse(buf, offset) {
-    var i = offset || 0, bth = _byteToHex;
-    return  bth[buf[i++]] + bth[buf[i++]] +
-            bth[buf[i++]] + bth[buf[i++]] + '-' +
-            bth[buf[i++]] + bth[buf[i++]] + '-' +
-            bth[buf[i++]] + bth[buf[i++]] + '-' +
-            bth[buf[i++]] + bth[buf[i++]] + '-' +
-            bth[buf[i++]] + bth[buf[i++]] +
-            bth[buf[i++]] + bth[buf[i++]] +
-            bth[buf[i++]] + bth[buf[i++]];
-  }
-
-  // **`v1()` - Generate time-based UUID**
-  //
-  // Inspired by https://github.com/LiosK/UUID.js
-  // and http://docs.python.org/library/uuid.html
-
-  // random #'s we need to init node and clockseq
-  var _seedBytes = _rng();
-
-  // Per 4.5, create and 48-bit node id, (47 random bits + multicast bit = 1)
-  var _nodeId = [
-    _seedBytes[0] | 0x01,
-    _seedBytes[1], _seedBytes[2], _seedBytes[3], _seedBytes[4], _seedBytes[5]
-  ];
-
-  // Per 4.2.2, randomize (14 bit) clockseq
-  var _clockseq = (_seedBytes[6] << 8 | _seedBytes[7]) & 0x3fff;
-
-  // Previous uuid creation time
-  var _lastMSecs = 0, _lastNSecs = 0;
-
-  // See https://github.com/broofa/node-uuid for API details
-  function v1(options, buf, offset) {
-    var i = buf && offset || 0;
-    var b = buf || [];
-
-    options = options || {};
-
-    var clockseq = options.clockseq != null ? options.clockseq : _clockseq;
-
-    // UUID timestamps are 100 nano-second units since the Gregorian epoch,
-    // (1582-10-15 00:00).  JSNumbers aren't precise enough for this, so
-    // time is handled internally as 'msecs' (integer milliseconds) and 'nsecs'
-    // (100-nanoseconds offset from msecs) since unix epoch, 1970-01-01 00:00.
-    var msecs = options.msecs != null ? options.msecs : new Date().getTime();
-
-    // Per 4.2.1.2, use count of uuid's generated during the current clock
-    // cycle to simulate higher resolution clock
-    var nsecs = options.nsecs != null ? options.nsecs : _lastNSecs + 1;
-
-    // Time since last uuid creation (in msecs)
-    var dt = (msecs - _lastMSecs) + (nsecs - _lastNSecs)/10000;
-
-    // Per 4.2.1.2, Bump clockseq on clock regression
-    if (dt < 0 && options.clockseq == null) {
-      clockseq = clockseq + 1 & 0x3fff;
-    }
-
-    // Reset nsecs if clock regresses (new clockseq) or we've moved onto a new
-    // time interval
-    if ((dt < 0 || msecs > _lastMSecs) && options.nsecs == null) {
-      nsecs = 0;
-    }
-
-    // Per 4.2.1.2 Throw error if too many uuids are requested
-    if (nsecs >= 10000) {
-      throw new Error('uuid.v1(): Can\'t create more than 10M uuids/sec');
-    }
-
-    _lastMSecs = msecs;
-    _lastNSecs = nsecs;
-    _clockseq = clockseq;
-
-    // Per 4.1.4 - Convert from unix epoch to Gregorian epoch
-    msecs += 12219292800000;
-
-    // `time_low`
-    var tl = ((msecs & 0xfffffff) * 10000 + nsecs) % 0x100000000;
-    b[i++] = tl >>> 24 & 0xff;
-    b[i++] = tl >>> 16 & 0xff;
-    b[i++] = tl >>> 8 & 0xff;
-    b[i++] = tl & 0xff;
-
-    // `time_mid`
-    var tmh = (msecs / 0x100000000 * 10000) & 0xfffffff;
-    b[i++] = tmh >>> 8 & 0xff;
-    b[i++] = tmh & 0xff;
-
-    // `time_high_and_version`
-    b[i++] = tmh >>> 24 & 0xf | 0x10; // include version
-    b[i++] = tmh >>> 16 & 0xff;
-
-    // `clock_seq_hi_and_reserved` (Per 4.2.2 - include variant)
-    b[i++] = clockseq >>> 8 | 0x80;
-
-    // `clock_seq_low`
-    b[i++] = clockseq & 0xff;
-
-    // `node`
-    var node = options.node || _nodeId;
-    for (var n = 0; n < 6; n++) {
-      b[i + n] = node[n];
-    }
-
-    return buf ? buf : unparse(b);
-  }
-
-  // **`v4()` - Generate random UUID**
-
-  // See https://github.com/broofa/node-uuid for API details
-  function v4(options, buf, offset) {
-    // Deprecated - 'format' argument, as supported in v1.2
-    var i = buf && offset || 0;
-
-    if (typeof(options) == 'string') {
-      buf = options == 'binary' ? new BufferClass(16) : null;
-      options = null;
-    }
-    options = options || {};
-
-    var rnds = options.random || (options.rng || _rng)();
-
-    // Per 4.4, set bits for version and `clock_seq_hi_and_reserved`
-    rnds[6] = (rnds[6] & 0x0f) | 0x40;
-    rnds[8] = (rnds[8] & 0x3f) | 0x80;
-
-    // Copy bytes to buffer, if provided
-    if (buf) {
-      for (var ii = 0; ii < 16; ii++) {
-        buf[i + ii] = rnds[ii];
-      }
-    }
-
-    return buf || unparse(rnds);
-  }
-
-  // Export public API
-  var uuid = v4;
-  uuid.v1 = v1;
-  uuid.v4 = v4;
-  uuid.parse = parse;
-  uuid.unparse = unparse;
-  uuid.BufferClass = BufferClass;
-
-  // Export RNG options
-  uuid.mathRNG = mathRNG;
-  uuid.nodeRNG = nodeRNG;
-  uuid.whatwgRNG = whatwgRNG;
-
-  if (typeof(module) != 'undefined') {
-    // Play nice with node.js
-    module.exports = uuid;
-  } else {
-    // Play nice with browsers
-    var _previousRoot = _global.uuid;
-
-    // **`noConflict()` - (browser only) to reset global 'uuid' var**
-    uuid.noConflict = function() {
-      _global.uuid = _previousRoot;
-      return uuid;
-    }
-    _global.uuid = uuid;
-  }
-}());
-});
-
-require.define("crypto",function(require,module,exports,__dirname,__filename,process){module.exports = require("crypto-browserify")});
-
-require.define("/node_modules/crypto-browserify/package.json",function(require,module,exports,__dirname,__filename,process){module.exports = {}});
-
-require.define("/node_modules/crypto-browserify/index.js",function(require,module,exports,__dirname,__filename,process){var sha = require('./sha')
-var rng = require('./rng')
-
-var algorithms = {
-  sha1: {
-    hex: sha.hex_sha1,
-    binary: sha.b64_sha1,
-    ascii: sha.str_sha1
-  }
-}
-
-function error () {
-  var m = [].slice.call(arguments).join(' ')
-  throw new Error([
-    m,
-    'we accept pull requests',
-    'http://github.com/dominictarr/crypto-browserify'
-    ].join('\n'))
-}
-
-exports.createHash = function (alg) {
-  alg = alg || 'sha1'
-  if(!algorithms[alg])
-    error('algorithm:', alg, 'is not yet supported')
-  var s = ''
-  var _alg = algorithms[alg]
-  return {
-    update: function (data) {
-      s += data
-      return this
-    },
-    digest: function (enc) {
-      enc = enc || 'binary'
-      var fn
-      if(!(fn = _alg[enc]))
-        error('encoding:', enc , 'is not yet supported for algorithm', alg)
-      var r = fn(s)
-      s = null //not meant to use the hash after you've called digest.
-      return r
+  stream.resume = function () {
+    if(stream.paused) {
+      stream.paused = false
+      stream.emit('drain')
     }
   }
-}
-
-exports.randomBytes = function(size, callback) {
-  if (callback && callback.call) {
-    try {
-      callback.call(this, undefined, rng(size));
-    } catch (err) { callback(err); }
-  } else {
-    return rng(size);
-  }
-}
-
-// the least I can do is make error messages for the rest of the node.js/crypto api.
-;['createCredentials'
-, 'createHmac'
-, 'createCypher'
-, 'createCypheriv'
-, 'createDecipher'
-, 'createDecipheriv'
-, 'createSign'
-, 'createVerify'
-, 'createDeffieHellman'
-, 'pbkdf2'].forEach(function (name) {
-  exports[name] = function () {
-    error('sorry,', name, 'is not implemented yet')
-  }
-})
-});
-
-require.define("/node_modules/crypto-browserify/sha.js",function(require,module,exports,__dirname,__filename,process){/*
- * A JavaScript implementation of the Secure Hash Algorithm, SHA-1, as defined
- * in FIPS PUB 180-1
- * Version 2.1a Copyright Paul Johnston 2000 - 2002.
- * Other contributors: Greg Holt, Andrew Kepert, Ydnar, Lostinet
- * Distributed under the BSD License
- * See http://pajhome.org.uk/crypt/md5 for details.
- */
-
-exports.hex_sha1 = hex_sha1;
-exports.b64_sha1 = b64_sha1;
-exports.str_sha1 = str_sha1;
-exports.hex_hmac_sha1 = hex_hmac_sha1;
-exports.b64_hmac_sha1 = b64_hmac_sha1;
-exports.str_hmac_sha1 = str_hmac_sha1;
-
-/*
- * Configurable variables. You may need to tweak these to be compatible with
- * the server-side, but the defaults work in most cases.
- */
-var hexcase = 0;  /* hex output format. 0 - lowercase; 1 - uppercase        */
-var b64pad  = ""; /* base-64 pad character. "=" for strict RFC compliance   */
-var chrsz   = 8;  /* bits per input character. 8 - ASCII; 16 - Unicode      */
-
-/*
- * These are the functions you'll usually want to call
- * They take string arguments and return either hex or base-64 encoded strings
- */
-function hex_sha1(s){return binb2hex(core_sha1(str2binb(s),s.length * chrsz));}
-function b64_sha1(s){return binb2b64(core_sha1(str2binb(s),s.length * chrsz));}
-function str_sha1(s){return binb2str(core_sha1(str2binb(s),s.length * chrsz));}
-function hex_hmac_sha1(key, data){ return binb2hex(core_hmac_sha1(key, data));}
-function b64_hmac_sha1(key, data){ return binb2b64(core_hmac_sha1(key, data));}
-function str_hmac_sha1(key, data){ return binb2str(core_hmac_sha1(key, data));}
-
-/*
- * Perform a simple self-test to see if the VM is working
- */
-function sha1_vm_test()
-{
-  return hex_sha1("abc") == "a9993e364706816aba3e25717850c26c9cd0d89d";
-}
-
-/*
- * Calculate the SHA-1 of an array of big-endian words, and a bit length
- */
-function core_sha1(x, len)
-{
-  /* append padding */
-  x[len >> 5] |= 0x80 << (24 - len % 32);
-  x[((len + 64 >> 9) << 4) + 15] = len;
-
-  var w = Array(80);
-  var a =  1732584193;
-  var b = -271733879;
-  var c = -1732584194;
-  var d =  271733878;
-  var e = -1009589776;
-
-  for(var i = 0; i < x.length; i += 16)
-  {
-    var olda = a;
-    var oldb = b;
-    var oldc = c;
-    var oldd = d;
-    var olde = e;
-
-    for(var j = 0; j < 80; j++)
-    {
-      if(j < 16) w[j] = x[i + j];
-      else w[j] = rol(w[j-3] ^ w[j-8] ^ w[j-14] ^ w[j-16], 1);
-      var t = safe_add(safe_add(rol(a, 5), sha1_ft(j, b, c, d)),
-                       safe_add(safe_add(e, w[j]), sha1_kt(j)));
-      e = d;
-      d = c;
-      c = rol(b, 30);
-      b = a;
-      a = t;
-    }
-
-    a = safe_add(a, olda);
-    b = safe_add(b, oldb);
-    c = safe_add(c, oldc);
-    d = safe_add(d, oldd);
-    e = safe_add(e, olde);
-  }
-  return Array(a, b, c, d, e);
-
-}
-
-/*
- * Perform the appropriate triplet combination function for the current
- * iteration
- */
-function sha1_ft(t, b, c, d)
-{
-  if(t < 20) return (b & c) | ((~b) & d);
-  if(t < 40) return b ^ c ^ d;
-  if(t < 60) return (b & c) | (b & d) | (c & d);
-  return b ^ c ^ d;
-}
-
-/*
- * Determine the appropriate additive constant for the current iteration
- */
-function sha1_kt(t)
-{
-  return (t < 20) ?  1518500249 : (t < 40) ?  1859775393 :
-         (t < 60) ? -1894007588 : -899497514;
-}
-
-/*
- * Calculate the HMAC-SHA1 of a key and some data
- */
-function core_hmac_sha1(key, data)
-{
-  var bkey = str2binb(key);
-  if(bkey.length > 16) bkey = core_sha1(bkey, key.length * chrsz);
-
-  var ipad = Array(16), opad = Array(16);
-  for(var i = 0; i < 16; i++)
-  {
-    ipad[i] = bkey[i] ^ 0x36363636;
-    opad[i] = bkey[i] ^ 0x5C5C5C5C;
-  }
-
-  var hash = core_sha1(ipad.concat(str2binb(data)), 512 + data.length * chrsz);
-  return core_sha1(opad.concat(hash), 512 + 160);
-}
-
-/*
- * Add integers, wrapping at 2^32. This uses 16-bit operations internally
- * to work around bugs in some JS interpreters.
- */
-function safe_add(x, y)
-{
-  var lsw = (x & 0xFFFF) + (y & 0xFFFF);
-  var msw = (x >> 16) + (y >> 16) + (lsw >> 16);
-  return (msw << 16) | (lsw & 0xFFFF);
-}
-
-/*
- * Bitwise rotate a 32-bit number to the left.
- */
-function rol(num, cnt)
-{
-  return (num << cnt) | (num >>> (32 - cnt));
-}
-
-/*
- * Convert an 8-bit or 16-bit string to an array of big-endian words
- * In 8-bit function, characters >255 have their hi-byte silently ignored.
- */
-function str2binb(str)
-{
-  var bin = Array();
-  var mask = (1 << chrsz) - 1;
-  for(var i = 0; i < str.length * chrsz; i += chrsz)
-    bin[i>>5] |= (str.charCodeAt(i / chrsz) & mask) << (32 - chrsz - i%32);
-  return bin;
-}
-
-/*
- * Convert an array of big-endian words to a string
- */
-function binb2str(bin)
-{
-  var str = "";
-  var mask = (1 << chrsz) - 1;
-  for(var i = 0; i < bin.length * 32; i += chrsz)
-    str += String.fromCharCode((bin[i>>5] >>> (32 - chrsz - i%32)) & mask);
-  return str;
-}
-
-/*
- * Convert an array of big-endian words to a hex string.
- */
-function binb2hex(binarray)
-{
-  var hex_tab = hexcase ? "0123456789ABCDEF" : "0123456789abcdef";
-  var str = "";
-  for(var i = 0; i < binarray.length * 4; i++)
-  {
-    str += hex_tab.charAt((binarray[i>>2] >> ((3 - i%4)*8+4)) & 0xF) +
-           hex_tab.charAt((binarray[i>>2] >> ((3 - i%4)*8  )) & 0xF);
-  }
-  return str;
-}
-
-/*
- * Convert an array of big-endian words to a base-64 string
- */
-function binb2b64(binarray)
-{
-  var tab = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-  var str = "";
-  for(var i = 0; i < binarray.length * 4; i += 3)
-  {
-    var triplet = (((binarray[i   >> 2] >> 8 * (3 -  i   %4)) & 0xFF) << 16)
-                | (((binarray[i+1 >> 2] >> 8 * (3 - (i+1)%4)) & 0xFF) << 8 )
-                |  ((binarray[i+2 >> 2] >> 8 * (3 - (i+2)%4)) & 0xFF);
-    for(var j = 0; j < 4; j++)
-    {
-      if(i * 8 + j * 6 > binarray.length * 32) str += b64pad;
-      else str += tab.charAt((triplet >> 6*(3-j)) & 0x3F);
-    }
-  }
-  return str;
+  return stream
 }
 
 });
 
-require.define("/node_modules/crypto-browserify/rng.js",function(require,module,exports,__dirname,__filename,process){// Original code adapted from Robert Kieffer.
-// details at https://github.com/broofa/node-uuid
-(function() {
-  var _global = this;
+require.define("/node_modules/pause-stream/package.json",function(require,module,exports,__dirname,__filename,process){module.exports = {"main":"index.js"}});
 
-  var mathRNG, whatwgRNG;
+require.define("/node_modules/pause-stream/index.js",function(require,module,exports,__dirname,__filename,process){var Stream = require('stream')
 
-  // NOTE: Math.random() does not guarantee "cryptographic quality"
-  mathRNG = function(size) {
-    var bytes = new Array(size);
-    var r;
+/*
+  was gonna use through for this,
+  but it does not match quite right,
+  because you need a seperate pause
+  mechanism for the readable and writable
+  sides.
+*/
 
-    for (var i = 0, r; i < size; i++) {
-      if ((i & 0x03) == 0) r = Math.random() * 0x100000000;
-      bytes[i] = r >>> ((i & 0x03) << 3) & 0xff;
-    }
-
-    return bytes;
+module.exports = function () {
+  var buffer = [], ended = false, destroyed = false
+  var stream = new Stream() 
+  stream.writable = stream.readable = true
+  stream.paused = false 
+  
+  stream.write = function (data) {
+    if(!this.paused)
+      this.emit('data', data)
+    else 
+      buffer.push(data)
+    return !(this.paused || buffer.length)
+  }
+  function onEnd () {
+    stream.readable = false
+    stream.emit('end')
+    process.nextTick(stream.destroy.bind(stream))
+  }
+  stream.end = function (data) {
+    if(data) this.write(data)
+    this.ended = true
+    this.writable = false
+    if(!(this.paused || buffer.length))
+      return onEnd()
+    
+    this.once('drain', onEnd)
+    this.drain()
   }
 
-  // currently only available in webkit-based browsers.
-  if (_global.crypto && crypto.getRandomValues) {
-    var _rnds = new Uint32Array(4);
-    whatwgRNG = function(size) {
-      var bytes = new Array(size);
-      crypto.getRandomValues(_rnds);
-
-      for (var c = 0 ; c < size; c++) {
-        bytes[c] = _rnds[c >> 2] >>> ((c & 0x03) * 8) & 0xff;
-      }
-      return bytes;
-    }
+  stream.drain = function () {
+    if(!buffer.length) return
+    while(!this.paused && buffer.length)
+      this.emit('data', buffer.shift())
+    //if the buffer has emptied. emit drain.
+    if(!buffer.length)
+      this.emit('drain')
   }
 
-  module.exports = whatwgRNG || mathRNG;
+  stream.resume = function () {
+    //this is where I need pauseRead, and pauseWrite.
+    //here the reading side is unpaused,
+    //but the writing side may still be paused.
+    //the whole buffer might not empity at once.
+    //it might pause again.
+    //the stream should never emit data inbetween pause()...resume()
+    //and write should return !buffer.length
+    this.paused = false
+    process.nextTick(this.drain.bind(this)) //will emit drain if buffer empties.
+    return this
+  }
 
-}())});
+  stream.destroy = function () {
+    if(destroyed) return
+    destroyed = ended = true     
+    buffer.length = 0
+    this.emit('close')
+  }
+
+  stream.pause = function () {
+    stream.paused = true
+    return this
+  }
+ 
+  return stream
+}
+});
 
 require.define("/examples/simple/node_modules/dnode/package.json",function(require,module,exports,__dirname,__filename,process){module.exports = {"main":"./index.js","browserify":"browser.js"}});
 
@@ -7470,21 +5644,11 @@ require.define("/examples/simple/browser.js",function(require,module,exports,__d
     , dnode = require("dnode")
 
 ports.get('magic@1.2.x', function (stream) {
-    console.log("connected to magic ports", stream)
-    console.dir(stream)
+    var result = document.getElementById("result")
 
-    var d = dnode()
-        , result = document.getElementById("result")
-        
-    d.on("remote", function (remote) {
-        console.log("got the remote!", remote, remote.magic)
-        console.dir(remote)
-        remote.magic(function (err, magic) {
-            console.log("got magic result!", magic)
-            result.textContent += magic
-        })
+    stream.on("data", function (data) {
+        result.textContent += data
     })
-    d.pipe(stream).pipe(d)
 })});
 require("/examples/simple/browser.js");
 })();
