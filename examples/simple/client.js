@@ -4,7 +4,7 @@ var boot = require("boot")
 var seaportProxyStream = mdm.createStream("/seaport-proxy/get/magic@1.2.x")
 
 seaportProxyStream.on("data", function (data) {
-    console.log("data from stream", data.toString())
+    console.log("[BROWSER]", data.toString())
 })
 
-seaportProxyStream.write("data into stream")
+seaportProxyStream.write("hello from browser!")

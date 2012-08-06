@@ -10,6 +10,8 @@ var http = require("http")
     , seaportServer = require("./seaport")
     , magicServer = require("./magic")
     , from = require("from")
+    , through = require("through")
+    , PauseStream = require("pause-stream")
 
 var httpRouter = new Router()
 httpRouter.addRoute("/", ecstatic)
@@ -57,29 +59,37 @@ function bundleBrowserify(req, res) {
 }
 
 function seaportProxy(browserStream, params) {
-    console.log("incoming service", params)
+    //console.log("incoming service", params)
     var serviceName = params.service
+        , buffer = PauseStream()
 
-    browserStream.on("data", function (data) {
-        console.log("got data from browserStream", data)
-    })
+    buffer.pause()
+
+    browserStream.pipe(buffer)
 
     ports.get(serviceName, function (ports) {
-        console.log("got ports", ports)
+        //console.log("got ports", ports)
         var client = net.connect(ports[0].port, ports[0].host)
-        browserStream.pipe(client)
-        var fakeClient = from(function (count, next) {
-            this.emit("data", "hello " + count)
-
-            setTimeout(next, 500)
-        })
-        fakeClient.pipe(browserStream)
+        buffer.pipe(client)
+        buffer.resume()
+        var intermediate = through(bufferToString)
+        //fakeClient.pipe(browserStream)
         // Hooking the client up freezes the browser and spinlocks your CPUs
         // WTF >:(
-        //client.pipe(browserStream)
-        console.log("piped it up!")
-        client.on("data", function (data) {
-            console.log("got data from magic", data.toString())
+        process.nextTick(function  () {
+            client.pipe(intermediate).pipe(browserStream)
         })
+        //console.log("piped it up!")
+        /*client.on("data", function (data) {
+            console.log("got data from magic", data.toString())
+        })*/
+        /*browserStream.on("data", function (data) {
+            console.log("got data from browser", data.toString())
+        })*/
     })
+}
+
+function bufferToString(data) {
+    //console.log("written to intermediate", data)
+    this.emit("data", data.toString())
 }

@@ -9,10 +9,10 @@ ports.service("magic@1.2.3", createMagic)
 
 function createMagic(port, done) {
     var server = net.createServer(function (stream) {
-        console.log("someone opened a connection to magic")
-        stream.write("hello!")
+        //console.log("someone opened a connection to magic")
+        stream.write("hello from magic!")
         stream.on("data", function (data) {
-            console.log("DATA FROM MAGIC STREAM", data.toString())
+            console.log("[MAGIC]", data.toString())
             stream.end()
         })
     })
