@@ -4,7 +4,7 @@ Seaport in the browser!
 
 ## Example
 
-See examples folder for a broken example :(
+IT WORKS. See example for a demo
 
 ## Installation
 
