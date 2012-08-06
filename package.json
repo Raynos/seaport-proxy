@@ -23,7 +23,8 @@
     "browserify": "~1.14.5",
     "ecstatic": "~0.1.6",
     "routes": "~0.1.1",
-    "seaport": "~0.8.0"
+    "seaport": "~0.8.0",
+    "from": "0.0.2"
   },
   "licenses": [
     {

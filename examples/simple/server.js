@@ -9,6 +9,7 @@ var http = require("http")
     , path = require("path")
     , seaportServer = require("./seaport")
     , magicServer = require("./magic")
+    , from = require("from")
 
 var httpRouter = new Router()
 httpRouter.addRoute("/", ecstatic)
@@ -67,6 +68,14 @@ function seaportProxy(browserStream, params) {
         console.log("got ports", ports)
         var client = net.connect(ports[0].port, ports[0].host)
         browserStream.pipe(client)
+        var fakeClient = from(function (count, next) {
+            this.emit("data", "hello " + count)
+
+            setTimeout(next, 500)
+        })
+        fakeClient.pipe(browserStream)
+        // Hooking the client up freezes the browser and spinlocks your CPUs
+        // WTF >:(
         //client.pipe(browserStream)
         console.log("piped it up!")
         client.on("data", function (data) {
