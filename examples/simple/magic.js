@@ -8,7 +8,9 @@ ports.service("magic@1.2.3", createMagic)
 function createMagic(port, done) {
     var server = net.createServer(function (stream) {
         stream.write("hello from magic!")
-        stream.on("data", console.log.bind(console, "[MAGIC]"))
+        stream.on("data", function (data) {
+            console.log("[MAGIC]", data.toString())
+        })
     })
     server.listen(port, done)
     console.log("magic service hooked on port", port)

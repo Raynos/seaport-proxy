@@ -9,9 +9,9 @@ module.exports = {
     connect: SeaportProxy
 }
 
-function SeaportProxy(ports, host, opts) {
-    if (typeof ports === "number") {
-        ports = seaport.connect(ports, host, opts)
+function SeaportProxy(ports, port, opts) {
+    if (typeof ports === "string") {
+        ports = seaport.connect(ports, port, opts)
     }
     return {
         get: partial(get, ports)
