@@ -1,4 +1,4 @@
-# seaport-proxy [![build status][1]][2]
+# seaport-proxy
 
 Seaport in the browser!
 
@@ -66,10 +66,6 @@ function createMagic(port, done) {
 ## Installation
 
 `npm install seaport-proxy`
-
-## Tests
-
-`make test`
 
 ## Contributors
 
