@@ -16,6 +16,8 @@ stream.on("data", console.log.bind(console, "[BROWSER]"))
 stream.write("hello from browser!")
 ```
 
+Create a client connection to the seaport server as long as the seaport proxy is running on the server.
+
 ## Server example
 
 ``` js
@@ -29,27 +31,27 @@ sock.install(someHttpServer, '/boot')
 console.log("sock hooked on", "/boot")
 ```
 
+Creates a seaport proxy on the server so that the browser can talk to seaport.
+
 ## Magic service
 
 ``` js
-var seaport = require("seaport")
+var seaport = require("seaport-stream")
     , net = require("net")
 
 var ports = seaport.connect("localhost", 9093)
 
 ports.service("magic@1.2.3", createMagic)
 
-function createMagic(port, done) {
-    var server = net.createServer(function (stream) {
-        stream.write("hello from magic!")
-        stream.on("data", function (data) {
-            console.log("[MAGIC]", data.toString())
-        })
+function createMagic(stream) {
+    stream.write("hello from magic!")
+    stream.on("data", function (data) {
+        console.log("[MAGIC]", data.toString())
     })
-    server.listen(port, done)
-    console.log("magic service hooked on port", port)
 }
 ```
+
+Expose a service over seaport that the browser can talk to. Use seaport-stream because you don't care about the IO and only about the stream
 
 ## Installation
 
