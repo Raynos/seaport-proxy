@@ -3,7 +3,6 @@ var seaportServer = require("./seaport")
     , server = require("./http")
 
 var boot = require("boot")
-    , Router = require("routes").Router
     , seaport = require("../..")
 
 var ports = seaport.connect("localhost", 9093)

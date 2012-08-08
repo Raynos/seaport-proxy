@@ -6,9 +6,9 @@ Seaport in the browser!
 
 ``` js
 var boot = require("boot")
-    , mdm = boot("/boot")
     , seaport = require("seaport-proxy")
-    , ports = seaport(mdm)
+
+var ports = seaport(boot("/boot"))
 
 var stream = ports.get("magic@1.2.x")
 stream.on("data", console.log.bind(console, "[BROWSER]"))
@@ -20,7 +20,6 @@ stream.write("hello from browser!")
 
 ``` js
 var boot = require("boot")
-    , Router = require("routes").Router
     , seaport = require("seaport-proxy")
 
 var ports = seaport.connect("localhost", 9093)
