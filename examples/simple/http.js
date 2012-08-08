@@ -1,33 +1,10 @@
-var http = require("http")
-    , path = require("path")
-    , browserify = require("browserify")
-    , ecstatic = require("ecstatic")(__dirname + "/static")
-    , Router = require("routes").Router
+var path = require("path")
+    , http = require("http")
+    , browserifyServer = require("browserify-server")
 
-var httpRouter = new Router()
-httpRouter.addRoute("/", ecstatic)
-httpRouter.addRoute("/bundle.js", bundleBrowserify)
+var handler = browserifyServer(path.join(__dirname, "static"))
+    , server = http.createServer(handler).listen(8080)
 
-var server = module.exports = http.createServer(httpHandler)
+module.exports = server
 
-server.listen(8080)
-console.log("listening on port", 8080)
-
-function httpHandler(req, res) {
-    var route = httpRouter.match(req.url)
-    if (route) {
-        route.fn(req, res)
-    }
-}
-
-function bundleBrowserify(req, res) {
-    var b = browserify()
-    b.addEntry(path.join(__dirname, "client.js"))
-    res.setHeader("content-type", "application/jsonn")
-    try {
-        res.end(b.bundle())
-    } catch (err) {
-        res.statusCode = 500
-        res.end(err.message)
-    }
-}
+console.log("server listening on port", 8080)

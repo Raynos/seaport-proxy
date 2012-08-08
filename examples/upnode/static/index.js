@@ -1,8 +1,7 @@
 var boot = require("boot")
-    , mdm = boot("/boot")
     , upnode = require("upnode")
     , seaport = require("../..")
-    , ports = seaport(mdm)
+    , ports = seaport(boot("/boot"))
 
 var up = upnode.connect({
     createStream: createStream
