@@ -4,17 +4,21 @@ var partial = require("ap").partial
 
 module.exports = seaport
 
-function seaport(mdm) {
+function seaport(mdm, prefix) {
+    prefix = prefix || "/seaport"
+
     return {
-        get: partial(get, mdm)
-        , query: partial(query, mdm)
+        get: get
+        , query: query
     }
-}
 
-function get(mdm, service) {
-    return mdm.createStream("/seaport/get/" + service + "/?uuid=" + rack())
-}
+    function get(service) {
+        return mdm.createStream(prefix + "/get/" + service +
+            "/?uuid=" + rack())
+    }
 
-function query(mdm, service) {
-    return mdm.createStream("/seaport/query/" + service + "/?uuid=" + rack())
+    function query(service) {
+        return mdm.createStream(prefix + "/query/" + service +
+            "/?uuid=" + rack())
+    }
 }

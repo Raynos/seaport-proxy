@@ -2,6 +2,7 @@ var partial = require("ap").partial
     , pick = require("deck").pick
     , net = require("net")
     , PauseStream = require("pause-stream")
+    , Router = require("routes").Router
     , through = require("through")
     , seaport = require("seaport")
 
@@ -9,16 +10,39 @@ module.exports = {
     connect: SeaportProxy
 }
 
-function SeaportProxy(ports, port, opts) {
+function SeaportProxy(ports, port, opts, prefix) {
     if (typeof ports === "string") {
         ports = seaport.connect(ports, port, opts)
     }
-    return {
-        get: partial(get, ports)
+
+    if (typeof port === "string") {
+        prefix = port
+    }
+
+    if (typeof opts === "string") {
+        prefix = opts
+    }
+
+    prefix = prefix || "/seaport"
+
+    var streamRouter = new Router()
+    streamRouter.addRoute(prefix + "/get/:service/*",
+        partial(invokeMethod, "get", ports))
+    streamRouter.addRoute(prefix + "/query/:service/*",
+        partial(invokeMethod, "query", ports))
+
+    return streamHandler
+
+    function streamHandler(stream) {
+        var route = streamRouter.match(stream.meta)
+        if (!route) {
+            return stream.end()
+        }
+        route.fn(stream, route.params)
     }
 }
 
-function get(ports, stream, params) {
+function invokeMethod(method, ports, stream, params) {
     var service = params.service
         , buffer = PauseStream()
 
@@ -26,7 +50,7 @@ function get(ports, stream, params) {
 
     stream.pipe(buffer)
 
-    ports.get(service, connectToService)
+    ports[method](service, connectToService)
 
     function connectToService(ports) {
         var port = pick(ports)

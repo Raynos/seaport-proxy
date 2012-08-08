@@ -20,25 +20,14 @@ stream.write("hello from browser!")
 
 ``` js
 var boot = require("boot")
-    , seaport = require("seaport")
     , Router = require("routes").Router
-    , seaport = require("../..")
-
-var sock = boot(streamHandler)
-sock.install(someHttpServer, '/boot')
-console.log("sock hooked on", "/boot")
+    , seaport = require("seaport-proxy")
 
 var ports = seaport.connect("localhost", 9093)
 
-var streamRouter = new Router()
-streamRouter.addRoute("/seaport/get/:service", ports.get)
-
-function streamHandler(stream) {
-    var route = streamRouter.match(stream.meta)
-    if (route) {
-        route.fn(stream, route.params)
-    }
-}
+var sock = boot(ports)
+sock.install(someHttpServer, '/boot')
+console.log("sock hooked on", "/boot")
 ```
 
 ## Magic service
