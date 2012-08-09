@@ -1,10 +1,8 @@
 var partial = require("ap").partial
-    , pick = require("deck").pick
-    , net = require("net")
-    , PauseStream = require("pause-stream")
-    , Router = require("routes").Router
-    , through = require("through")
+    , StreamRouter = require("stream-router")
     , seaport = require("seaport")
+    , invokeMethod = require("./lib/invokeMethod")
+    , service = require("./lib/service")
 
 module.exports = {
     connect: SeaportProxy
@@ -25,49 +23,13 @@ function SeaportProxy(ports, port, opts, prefix) {
 
     prefix = prefix || "/seaport"
 
-    var streamRouter = new Router()
+    var streamRouter = StreamRouter()
     streamRouter.addRoute(prefix + "/get/:service/*",
         partial(invokeMethod, "get", ports))
     streamRouter.addRoute(prefix + "/query/:service/*",
         partial(invokeMethod, "query", ports))
+    streamRouter.addRoute(prefix + "/service/:service/*",
+        partial(service, ports))
 
-    return streamHandler
-
-    function streamHandler(stream) {
-        var route = streamRouter.match(stream.meta)
-        if (!route) {
-            return stream.end()
-        }
-        route.fn(stream, route.params)
-    }
-}
-
-function invokeMethod(method, ports, stream, params) {
-    var service = params.service
-        , buffer = PauseStream()
-
-    buffer.pause()
-
-    stream.pipe(buffer)
-
-    ports[method](service, connectToService)
-
-    function connectToService(ports) {
-        var port = pick(ports)
-            , client = net.connect(port.port, port.host)
-
-        buffer.pipe(client)
-        buffer.resume()
-
-        var intermediate = through(stringer)
-        process.nextTick(pipe)
-
-        function pipe() {
-            client.pipe(intermediate).pipe(stream)
-        }
-    }
-}
-
-function stringer(data) {
-    this.emit("data", data.toString())
+    return streamRouter
 }
