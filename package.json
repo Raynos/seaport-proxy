@@ -30,7 +30,10 @@
     "ecstatic": "~0.1.6",
     "routes": "~0.1.1",
     "browserify-server": "0.0.1",
-    "seaport-stream": "0.0.1"
+    "seaport-stream": "0.0.1",
+    "stream-router": "0.0.1",
+    "lazynode": "0.1.0",
+    "hat": "0.0.3"
   },
   "licenses": [
     {

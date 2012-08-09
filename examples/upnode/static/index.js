@@ -1,19 +1,22 @@
 var boot = require("boot")
-    , upnode = require("upnode")
+    , lazynode = require("lazynode")
     , seaport = require("../..")
     , ports = seaport(boot("/boot"))
 
-var up = upnode.connect({
+var remote = lazynode.connect({
     createStream: createStream
+    , methods: ["time"]
 })
 
-setInterval(function () {
-    up(function (remote) {
-        remote.time(function (t) {
-            console.log("time = " + t)
-        })
-    })
-}, 1000)
+setInterval(timer, 1000)
+
+function timer() {
+    remote.time(log)
+}
+
+function log(time) {
+    console.log("time = " + time)
+}
 
 function createStream() {
     return ports.get("magic@1.2.x")
