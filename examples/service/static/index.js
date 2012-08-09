@@ -4,5 +4,5 @@ var mdm = boot("/boot")
 
 module.exports = mdm
 
-require("createServer")
-require("joinServer")
+require("./createServer")
+require("./joinServer")

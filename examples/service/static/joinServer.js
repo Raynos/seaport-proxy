@@ -10,7 +10,7 @@ var input = document.getElementById("server-prefix")
 
 button.addEventListener("click", function () {
     var serverName = input.value
-        , remote = lazynode({
+        , remote = lazynode.connect({
             createStream: createStream
             , methods: ["time"]
         })
