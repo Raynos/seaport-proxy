@@ -24,12 +24,14 @@ function SeaportProxy(ports, port, opts, prefix) {
     prefix = prefix || "/seaport"
 
     var streamRouter = StreamRouter()
-    streamRouter.addRoute(prefix + "/get/:service/*",
-        partial(invokeMethod, "get", ports))
-    streamRouter.addRoute(prefix + "/query/:service/*",
-        partial(invokeMethod, "query", ports))
-    streamRouter.addRoute(prefix + "/service/:service/*",
-        partial(service, ports))
+        , serviceRoute = prefix + "/service/*"
+        
+    streamRouter.addRoute(prefix + "/get/:service/*"
+        , partial(invokeMethod, "get", ports))
+    streamRouter.addRoute(prefix + "/query/:service/*"
+        , partial(invokeMethod, "query", ports))
+    streamRouter.addRoute(prefix + "/service/*"
+        , service(ports, prefix + "/service"))
 
     return streamRouter
 }

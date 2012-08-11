@@ -3,11 +3,30 @@ var ports = require("./seaport")
     , browserList = require("./browserList")
 
 var boot = require("boot")
-    , streamRouter = require("stream-router")()
+    , StreamRouter = require("stream-router")
+
+var streamRouter = StreamRouter()
+    , sock = boot(log(streamRouter))
 
 streamRouter.addRoute("/seaport/*", ports)
 streamRouter.addRoute("/browserList/*", browserList)
 
-var sock = boot(streamRouter)
 sock.install(server, '/boot')
 console.log("sock hooked on", "/boot")
+
+function log(f) {
+    return function (stream) {
+        console.log("[INCOMING-STREAM]", {
+            meta: stream.meta
+            , id: stream.id
+        })
+        /*stream.on("data", function (data) {
+            console.log("[STREAM-DATA]", {
+                meta: stream.meta
+                , id: stream.id
+                , data: data
+            })
+        })*/
+        f.apply(this, arguments)
+    }
+}

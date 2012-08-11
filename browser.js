@@ -1,5 +1,5 @@
-var rack = require("hat").rack(128, 16, 16)
-    , MuxDemux = require("mux-demux")
+var StreamServer = require("browser-stream-server")
+    , rack = require("hat").rack(128, 16, 16)
 
 module.exports = seaport
 
@@ -23,14 +23,12 @@ function seaport(server, prefix) {
     }
 
     function service(serviceName, callback) {
-        var mdm = MuxDemux({
-                error: false
-            })
-            , connection = server.createStream(prefix + "/service/" +
-                serviceName + "/?uuid=" + rack())
-
-        connection.pipe(mdm).pipe(connection)
-
-        mdm.on("connection", callback)
+        console.log("created StreamServer", serviceName)
+        var streamServer = StreamServer(server, {
+            prefix: prefix + "/service"
+        }, callback)
+        var stream = streamServer.listen(serviceName)
+        console.log("server", stream.meta)
+        return stream
     }
 }

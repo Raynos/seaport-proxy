@@ -1,4 +1,4 @@
-var  seaport = require("../..")
+var  seaport = require("../../../browser")
     , lazynode = require("lazynode")
     , mdm = require("./index")
     , browserList = require("./browserList")
@@ -18,10 +18,12 @@ function createServer() {
     browserList.add(serverName, serviceOnProxy)
 
     function serviceOnProxy() {
+        console.log("browserlist returned")
         ports.service(serverName, handleStream)
     }
 
     function handleStream(stream) {
+        console.log("handling stream", stream)
         var up = lazynode(methods)
 
         stream.pipe(up).pipe(stream)

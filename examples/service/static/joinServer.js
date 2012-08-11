@@ -1,4 +1,4 @@
-var seaport = require("../..")
+var seaport = require("../../../browser")
     , lazynode = require("lazynode")
     , mdm = require("./index")
     , ports = seaport(mdm)
@@ -17,19 +17,16 @@ button.addEventListener("click", function () {
 
     output.textContent = ""
 
-    setInterval(render, 1000)
+    setInterval(function () {
+        remote.time(function (time) {
+            console.log("time?", time)
+            var div = document.createElement("div")
+            div.textContent = time
+            output.appendChild(div)
+        })
+    }, 1000)
 
     function createStream() {
         return ports.get(serverName)
-    }
-
-    function render() {
-        remote.time(renderTime)
-    }
-
-    function renderTime(time) {
-        var div = document.createElement("div")
-        div.textContent = time
-        output.appendChild(div)
     }
 })

@@ -1,12 +1,12 @@
 var lazynode = require("lazynode")
-    , list = []
+    , list = {}
 
 module.exports = browserList
 
 function browserList(stream) {
     var up = lazynode({
         add: function (id, cb) {
-            list.push(id)
+            list[id] = true
             cb && cb(null)
         }
         , get: function (cb) {

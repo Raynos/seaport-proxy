@@ -13,10 +13,12 @@ var browserList = module.exports = lazynode.connect({
 button.addEventListener("click", refreshList)
 
 function refreshList() {
+    console.log("calling get on browserList")
     browserList.get(render)
 
     function render(list) {
-        output.textContent = list.join(",")
+        console.log("got render")
+        output.textContent = Object.keys(list).join(",")
     }
 }
 

@@ -1,5 +1,5 @@
 var boot = require("boot")
-    , seaport = require("../..")
+    , seaport = require("../../../browser")
     , ports = seaport(boot("/boot"))
 
 var stream = ports.get("magic@1.2.x")
